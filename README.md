@@ -64,7 +64,7 @@ Semua endpoint di bawah memakai prefix `/api`. Selain login dan health, semuanya
 | POST | `/orders/:id/confirm` | Konfirmasi dan kurangi stok |
 | POST | `/orders/:id/cancel` | Batalkan dan kembalikan stok |
 | POST | `/orders/:id/fulfill` | Tandai selesai |
-| GET | `/reports/summary`, `/reports/orders.csv` | Ringkasan dan ekspor |
+| GET | `/reports/summary`, `/reports/orders.xlsx` | Ringkasan dan Excel berformat |
 
 Endpoint daftar produk dan pesanan menerima `page`, `limit`, `search`; pesanan juga menerima `status`. Kesalahan dikembalikan sebagai `{ "error": "..." }`, dan validasi dapat memuat `details` per field.
 
@@ -76,7 +76,7 @@ Frontend Vite dan API Express berada dalam satu project Vercel dan satu domain. 
 2. Jalankan `npm install`, `npm run db:deploy`, lalu `npm run db:seed` dari komputer lokal dengan `SEED_DEMO_PASSWORD` yang unik (minimal 12 karakter). Perintah migrasi menggunakan `DIRECT_URL`; aplikasi menggunakan `DATABASE_URL`. Seed hanya perlu dijalankan sekali untuk menyiapkan akun demo, dan boleh dijalankan ulang jika memang ingin menyetel ulang password akun demo.
 3. Push repositori ke GitHub, lalu import ke Vercel sebagai satu project. Set **Framework Preset: Vite** dan **Root Directory: repository root**. `vercel.json` sudah mengatur build, output, Function API, dan rute SPA.
 4. Tambahkan variabel `DATABASE_URL` (pooled) dan `DIRECT_URL` (direct) pada environment Vercel Production. Jangan tambahkan `SEED_DEMO_PASSWORD` ke Vercel karena seed dijalankan lokal. Deploy setelah migrasi berhasil. Untuk Preview, gunakan database Neon terpisah atau jangan aktifkan deployment Preview agar data demo Production tidak tercampur.
-5. Cek `https://domain-vercel/api/health`, lalu uji login, stok, pesanan, dashboard, dan ekspor CSV. Jika login gagal setelah deployment, periksa apakah kedua URL Neon benar dan migrasi sudah dijalankan. Gunakan region Vercel yang dekat dengan region Neon untuk mengurangi jeda.
+5. Cek `https://domain-vercel/api/health`, lalu uji login, stok, pesanan, dashboard, dan unduhan Excel. Jika login gagal setelah deployment, periksa apakah kedua URL Neon benar dan migrasi sudah dijalankan. Gunakan region Vercel yang dekat dengan region Neon untuk mengurangi jeda.
 
 Pada paket gratis, kapasitas dan batas penggunaan mengikuti kebijakan masing-masing penyedia. Demo ini ditujukan untuk portofolio pribadi; awasi kuota Vercel dan Neon jika mulai ramai.
 
