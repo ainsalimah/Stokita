@@ -77,7 +77,7 @@ export function buildOrderWorkbook(storeName: string, orders: ReportOrder[]) {
   header.eachCell(cell => {
     cell.font = { name: 'Aptos', size: 10, bold: true, color: { argb: white } }
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: blue } }
-    cell.alignment = { vertical: 'middle', horizontal: cell.col === 4 ? 'right' : 'left', indent: cell.col === 4 ? 0 : 1 }
+    cell.alignment = { vertical: 'middle', horizontal: Number(cell.col) === 4 ? 'right' : 'left', indent: Number(cell.col) === 4 ? 0 : 1 }
   })
 
   if (orders.length === 0) {
@@ -101,7 +101,7 @@ export function buildOrderWorkbook(storeName: string, orders: ReportOrder[]) {
     row.eachCell(cell => {
       cell.font = { name: 'Aptos', size: 10, color: { argb: ink } }
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: index % 2 ? pale : white } }
-      cell.alignment = { vertical: 'middle', horizontal: cell.col === 4 ? 'right' : 'left', indent: cell.col === 4 ? 0 : 1 }
+      cell.alignment = { vertical: 'middle', horizontal: Number(cell.col) === 4 ? 'right' : 'left', indent: Number(cell.col) === 4 ? 0 : 1 }
       cell.border = { bottom: { style: 'hair', color: { argb: border } } }
     })
     const status = row.getCell(3)
