@@ -4,9 +4,11 @@ import { BrowserRouter, NavLink, Navigate, Route, Routes, useNavigate } from 're
 import { LayoutDashboard, Package, ClipboardList, ArrowDownUp, Users, BarChart3, LogOut, Plus, Search, Menu, X, Download, ChevronLeft, ChevronRight, ShieldCheck, Store, AlertCircle, CheckCircle2 } from 'lucide-react'
 import './style.css'
 import './dashboard.css'
+import './demo.css'
 
 type Role = 'OWNER' | 'MANAGER' | 'STAFF'
 type User = { id: string; name: string; email: string; role: Role; active?: boolean }
+type StoreInfo = { id?: string; name: string; isDemo?: boolean; demoExpiresAt?: string | null }
 type Product = { id: string; sku: string; name: string; category: string | null; price: number; stock: number; minStock: number; active: boolean }
 type OrderItem = { id: string; productId: string; quantity: number; unitPrice: number; product: { name: string; sku: string } }
 type Order = { id: string; number: string; customerName: string; status: 'DRAFT' | 'CONFIRMED' | 'FULFILLED' | 'CANCELLED'; total: number; createdAt: string; items: OrderItem[] }
@@ -53,19 +55,56 @@ function Pager({ page, total, limit, onChange }: { page: number; total: number; 
 }
 function SectionHeader({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: React.ReactNode }) { return <div className="page-header"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{description}</p></div>{action}</div> }
 
-function Login({ onLogin }: { onLogin: (user: User, store: { name: string }) => void }) {
-  const [email, setEmail] = useState('owner@tokomaju.demo')
+function Login({ onLogin }: { onLogin: (user: User, store: StoreInfo) => void }) {
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-  async function submit(event: React.FormEvent) { event.preventDefault(); setBusy(true); setError(''); try { const result = await api<{ user: User; store: { name: string } }>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }); onLogin(result.user, result.store) } catch (e) { setError((e as Error).message) } finally { setBusy(false) } }
-  return <div className="login-shell"><div className="login-story"><div className="brand large"><span className="brand-mark"><Package size={25}/></span><span>stokita<span className="brand-dot">.</span></span></div><div className="story-content"><span className="story-tag">OPERASI TOKO, LEBIH TERARAH</span><h1>Stok akurat.<br/>Pesanan lancar.<br/><em>Keputusan lebih pasti.</em></h1><p>Satu tempat untuk memantau produk, pergerakan stok, dan pesanan di toko Anda.</p><div className="story-stat"><strong>01</strong><span>Alur kerja yang jelas, dari barang masuk hingga pesanan selesai.</span></div></div><div className="story-footer">STOKITA / INVENTORY OPERATIONS</div></div><div className="login-side"><form className="login-card" onSubmit={submit}><div className="mobile-brand brand"><span className="brand-mark"><Package size={20}/></span>stokita<span className="brand-dot">.</span></div><div className="login-icon"><ShieldCheck size={25}/></div><p className="eyebrow">SELAMAT DATANG KEMBALI</p><h2>Masuk ke ruang kerja</h2><p className="muted">Kelola operasional toko dengan lebih tenang.</p><Notice message={error}/><label>Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} required autoComplete="email"/></label><label>Kata sandi<input type="password" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="current-password" placeholder="Masukkan kata sandi"/></label><button className="button primary full" disabled={busy}>{busy ? 'Memproses…' : 'Masuk'}</button><p className="login-help">Gunakan akun demo yang tercantum di README proyek.</p></form></div></div>
+  const [demoBusy, setDemoBusy] = useState<Role | null>(null)
+  async function submit(event: React.FormEvent) {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      const result = await api<{ user: User; store: StoreInfo }>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
+      onLogin(result.user, result.store)
+    } catch (e) { setError((e as Error).message) }
+    finally { setBusy(false) }
+  }
+  async function openDemo(role: Role) {
+    setDemoBusy(role)
+    setError('')
+    try {
+      const result = await api<{ user: User; store: StoreInfo }>('/auth/demo', { method: 'POST', body: JSON.stringify({ role }) })
+      onLogin(result.user, result.store)
+    } catch (e) { setError((e as Error).message) }
+    finally { setDemoBusy(null) }
+  }
+  const roles: { role: Role; description: string }[] = [
+    { role: 'OWNER', description: 'Kinerja dan tim' },
+    { role: 'MANAGER', description: 'Stok dan pesanan' },
+    { role: 'STAFF', description: 'Pekerjaan toko' }
+  ]
+  return <div className="login-shell">
+    <div className="login-story"><div className="brand large"><span className="brand-mark"><Package size={25}/></span><span>stokita<span className="brand-dot">.</span></span></div><div className="story-content"><span className="story-tag">OPERASI TOKO, LEBIH TERARAH</span><h1>Stok akurat.<br/>Pesanan lancar.<br/><em>Keputusan lebih pasti.</em></h1><p>Satu tempat untuk memantau produk, pergerakan stok, dan pesanan di toko Anda.</p><div className="story-stat"><strong>01</strong><span>Alur kerja yang jelas, dari barang masuk hingga pesanan selesai.</span></div></div><div className="story-footer">STOKITA / INVENTORY OPERATIONS</div></div>
+    <div className="login-side"><form className="login-card" onSubmit={submit}>
+      <div className="mobile-brand brand"><span className="brand-mark"><Package size={20}/></span>stokita<span className="brand-dot">.</span></div>
+      <div className="login-icon"><ShieldCheck size={25}/></div>
+      <p className="eyebrow">SELAMAT DATANG</p><h2>Coba Stokita sekarang</h2><p className="muted">Pilih peran untuk langsung melihat cara kerjanya.</p>
+      <Notice message={error}/>
+      <div className="demo-entry"><p className="demo-caption">Setiap klik membuat ruang demo pribadi dengan data contoh. Bebas mencoba selama 24 jam.</p><div className="demo-role-grid">{roles.map(item => <button type="button" className="demo-role" key={item.role} disabled={busy || demoBusy !== null} onClick={() => openDemo(item.role)}><strong>{demoBusy === item.role ? 'Membuka…' : roleText[item.role]}</strong><small>{item.description}</small></button>)}</div></div>
+      <div className="login-divider"><span>atau masuk dengan akun sendiri</span></div>
+      <label>Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} required autoComplete="email"/></label>
+      <label>Kata sandi<input type="password" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="current-password" placeholder="Masukkan kata sandi"/></label>
+      <button className="button primary full" disabled={busy || demoBusy !== null}>{busy ? 'Memproses…' : 'Masuk'}</button>
+    </form></div>
+  </div>
 }
 
 const nav = [{ to: '/', label: 'Ringkasan', icon: LayoutDashboard }, { to: '/products', label: 'Produk', icon: Package }, { to: '/stock', label: 'Pergerakan stok', icon: ArrowDownUp }, { to: '/orders', label: 'Pesanan', icon: ClipboardList }, { to: '/reports', label: 'Laporan', icon: BarChart3 }, { to: '/users', label: 'Pengguna', icon: Users }]
-function Shell({ user, store, onLogout }: { user: User; store: { name: string }; onLogout: () => void }) {
+function Shell({ user, store, onLogout }: { user: User; store: StoreInfo; onLogout: () => void }) {
   const [open, setOpen] = useState(false)
-  return <div className="app-shell"><aside className={`sidebar ${open ? 'open' : ''}`}><div className="sidebar-top"><div className="brand"><span className="brand-mark"><Package size={21}/></span>stokita<span className="brand-dot">.</span></div><button className="mobile-close icon-button" onClick={() => setOpen(false)} aria-label="Tutup menu"><X size={20}/></button></div><div className="workspace"><div className="workspace-icon"><Store size={20}/></div><div><small>RUANG KERJA</small><strong>{store.name}</strong></div></div><div className="nav-label">MENU UTAMA</div><nav>{nav.filter(item => item.to !== '/users' || user.role === 'OWNER').map(item => <NavLink key={item.to} to={item.to} end={item.to === '/'} onClick={() => setOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}><item.icon size={19}/>{item.label}</NavLink>)}</nav><div className="sidebar-bottom"><div className="profile"><div className="avatar">{user.name.charAt(0).toUpperCase()}</div><div><strong>{user.name}</strong><small>{roleText[user.role]}</small></div></div><button className="nav-item logout" onClick={onLogout}><LogOut size={18}/>Keluar</button></div></aside><div className="main-area"><header className="topbar"><button className="mobile-menu icon-button" onClick={() => setOpen(true)} aria-label="Buka menu"><Menu size={22}/></button><div className="breadcrumb">Workspace <span>/</span> {store.name}</div><div className="topbar-right"><span className="live-dot"/>Sistem aktif <span className="topbar-sep"/> {user.name}</div></header><main className="content"><Routes><Route path="/" element={<Dashboard role={user.role}/>}/><Route path="/products" element={<Products role={user.role}/>}/><Route path="/stock" element={<Stock/>}/><Route path="/orders" element={<Orders/>}/><Route path="/reports" element={<Reports/>}/><Route path="/users" element={user.role === 'OWNER' ? <UsersPage/> : <Navigate to="/"/>}/><Route path="*" element={<Navigate to="/"/>}/></Routes></main></div>{open && <div className="scrim" onClick={() => setOpen(false)}/>}</div>
+  return <div className="app-shell"><aside className={`sidebar ${open ? 'open' : ''}`}><div className="sidebar-top"><div className="brand"><span className="brand-mark"><Package size={21}/></span>stokita<span className="brand-dot">.</span></div><button className="mobile-close icon-button" onClick={() => setOpen(false)} aria-label="Tutup menu"><X size={20}/></button></div><div className="workspace"><div className="workspace-icon"><Store size={20}/></div><div><small>{store.isDemo ? 'RUANG DEMO PRIBADI' : 'RUANG KERJA'}</small><strong>{store.name}</strong></div></div><div className="nav-label">MENU UTAMA</div><nav>{nav.filter(item => item.to !== '/users' || user.role === 'OWNER').map(item => <NavLink key={item.to} to={item.to} end={item.to === '/'} onClick={() => setOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}><item.icon size={19}/>{item.label}</NavLink>)}</nav><div className="sidebar-bottom"><div className="profile"><div className="avatar">{user.name.charAt(0).toUpperCase()}</div><div><strong>{user.name}</strong><small>{roleText[user.role]}</small></div></div><button className="nav-item logout" onClick={onLogout}><LogOut size={18}/>Keluar</button></div></aside><div className="main-area"><header className="topbar"><button className="mobile-menu icon-button" onClick={() => setOpen(true)} aria-label="Buka menu"><Menu size={22}/></button><div className="breadcrumb">Workspace <span>/</span> {store.name}</div><div className="topbar-right"><span className="live-dot"/>Sistem aktif <span className="topbar-sep"/> {user.name}</div></header><main className="content"><Routes><Route path="/" element={<Dashboard role={user.role}/>}/><Route path="/products" element={<Products role={user.role}/>}/><Route path="/stock" element={<Stock/>}/><Route path="/orders" element={<Orders/>}/><Route path="/reports" element={<Reports/>}/><Route path="/users" element={user.role === 'OWNER' ? <UsersPage/> : <Navigate to="/"/>}/><Route path="*" element={<Navigate to="/"/>}/></Routes></main></div>{open && <div className="scrim" onClick={() => setOpen(false)}/>}</div>
 }
 
 function ActivityPanel({ items }: { items: RecentActivity[] }) {
@@ -185,9 +224,9 @@ function UsersPage() {
 }
 
 function App() {
-  const [account, setAccount] = useState<{ user: User; store: { name: string } } | null>(null)
+  const [account, setAccount] = useState<{ user: User; store: StoreInfo } | null>(null)
   const [loading, setLoading] = useState(true)
-  const refresh = useCallback(() => { api<{ user: User; store: { name: string } }>('/auth/me').then(setAccount).catch(() => setAccount(null)).finally(() => setLoading(false)) }, [])
+  const refresh = useCallback(() => { api<{ user: User; store: StoreInfo }>('/auth/me').then(setAccount).catch(() => setAccount(null)).finally(() => setLoading(false)) }, [])
   useEffect(() => { refresh() }, [refresh])
   async function logout() { await api('/auth/logout', { method: 'POST' }).catch(() => {}); setAccount(null) }
   if (loading) return <div className="boot"><div className="brand"><span className="brand-mark"><Package size={22}/></span>stokita<span className="brand-dot">.</span></div><Loading/></div>

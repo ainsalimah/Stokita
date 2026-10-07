@@ -12,10 +12,13 @@ Portofolio full stack untuk inventaris dan pesanan multi-toko. Dibuat dengan Rea
 Untuk memeriksa proyek: `npm run typecheck`, `npm test`, dan `npm run build`.
 
 Untuk pengujian integrasi pada database lokal yang sudah diisi seed, jalankan server lalu set `TEST_DEMO_PASSWORD` sesuai password seed dan jalankan `npm run test:integration`. Pengujian ini membuat produk dan pesanan uji, jadi gunakan database khusus pengembangan.
+Untuk menguji demo sekali klik pada database pengembangan, jalankan server dan `npm run test:demo:integration`. Pengujian ini membuat tiga ruang demo sementara; alamat server bawaan adalah `http://localhost:3001`.
 
 ## Akun demo
 
-Semua akun menggunakan nilai `SEED_DEMO_PASSWORD` saat seed dijalankan.
+Di halaman login publik, pilih **Pemilik**, **Manajer**, atau **Staf** untuk masuk tanpa kata sandi. Setiap klik membuat Toko Demo pribadi dengan produk, stok, dan pesanan contoh. Data hanya berlaku 24 jam dan tidak bercampur dengan data pengunjung lain. Keluar lalu pilih peran lain untuk mencoba dashboard berbeda. Ruang demo yang kedaluwarsa dibersihkan saat ada pengunjung berikutnya.
+
+Akun seed berikut ditujukan untuk pengembangan lokal. Semuanya menggunakan nilai `SEED_DEMO_PASSWORD` saat seed dijalankan.
 
 | Toko | Pemilik | Manajer | Staf |
 | --- | --- | --- | --- |
@@ -57,6 +60,7 @@ Semua endpoint di bawah memakai prefix `/api`. Selain login dan health, semuanya
 | Metode | Endpoint | Keterangan |
 | --- | --- | --- |
 | POST | `/auth/login` | Login dengan email dan password |
+| POST | `/auth/demo` | Buat ruang demo pribadi dan langsung masuk sebagai `OWNER`, `MANAGER`, atau `STAFF` |
 | GET / POST | `/auth/me`, `/auth/logout` | Sesi saat ini dan logout |
 | GET / POST / PATCH | `/users`, `/users/:id` | Daftar, tambah, aktif/nonaktif pengguna; hanya owner |
 | GET / POST / PATCH | `/products`, `/products/:id` | Daftar dan kelola produk |
@@ -69,6 +73,8 @@ Semua endpoint di bawah memakai prefix `/api`. Selain login dan health, semuanya
 | GET | `/reports/summary`, `/reports/orders.xlsx` | Ringkasan dan Excel berformat |
 
 Endpoint daftar produk dan pesanan menerima `page`, `limit`, `search`; pesanan juga menerima `status`. Kesalahan dikembalikan sebagai `{ "error": "..." }`, dan validasi dapat memuat `details` per field.
+
+`POST /auth/demo` menerima `{ "role": "STAFF" }` (atau `OWNER`/`MANAGER`). Endpoint ini membatasi jumlah ruang demo aktif dan pembuatan baru per menit. Tiap ruang demo juga membatasi jumlah pengguna, produk, pesanan, dan catatan stok. Jalankan migrasi database terbaru sebelum menerbitkan versi aplikasi yang berisi tombol demo.
 
 ## Deployment gratis: Vercel + Neon
 
