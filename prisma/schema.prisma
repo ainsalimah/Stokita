@@ -32,11 +32,14 @@ model Store {
   id String @id @default(cuid())
   name String
   createdAt DateTime @default(now())
+  isDemo Boolean @default(false)
+  demoExpiresAt DateTime?
   users User[]
   products Product[]
   orders Order[]
   movements StockMovement[]
   auditLogs AuditLog[]
+  @@index([isDemo, demoExpiresAt])
 }
 
 model User {
