@@ -8,6 +8,7 @@ import { loadEnvFile } from 'node:process'
 import { PrismaClient, Prisma, Role, OrderStatus } from '@prisma/client'
 import { z, ZodError } from 'zod'
 import { orderTransition } from './orderRules.js'
+import { buildOrderWorkbook } from './reportWorkbook.js'
 
 if (fs.existsSync('.env')) loadEnvFile('.env')
 export const db = new PrismaClient()
@@ -243,39 +244,10 @@ app.get('/api/reports/summary', async (req, res) => {
 app.get('/api/reports/orders.xlsx', async (req, res) => {
   const me = identity(req)
   const orders = await db.order.findMany({ where: { storeId: me.storeId }, orderBy: { createdAt: 'desc' } })
-  
-  const ExcelJS = await import('exceljs')
-  const workbook = new ExcelJS.Workbook()
-  const sheet = workbook.addWorksheet('Laporan Pesanan')
-  
-  sheet.columns = [
-    { header: 'Nomor Pesanan', key: 'number', width: 20 },
-    { header: 'Pelanggan', key: 'customer', width: 25 },
-    { header: 'Status', key: 'status', width: 15 },
-    { header: 'Total (Rp)', key: 'total', width: 20 },
-    { header: 'Tanggal', key: 'date', width: 25 },
-  ]
-  
-  sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } }
-  sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0ea5e9' } }
-  sheet.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' }
-
-  for (const order of orders) {
-    sheet.addRow({
-      number: order.number,
-      customer: order.customerName,
-      status: order.status,
-      total: order.total,
-      date: new Date(order.createdAt).toLocaleString('id-ID')
-    })
-  }
-  
-  sheet.getColumn('total').numFmt = '"Rp"#,##0;[Red]-"Rp"#,##0'
-  sheet.getColumn('total').alignment = { horizontal: 'right' }
+  const workbook = buildOrderWorkbook(me.storeName, orders)
 
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
   res.setHeader('Content-Disposition', 'attachment; filename="laporan-pesanan.xlsx"')
-  
   await workbook.xlsx.write(res)
   res.end()
 })
