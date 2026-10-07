@@ -1,0 +1,45 @@
+{
+  "name": "stokita-portfolio",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build && node dist-server/index.js",
+    "dev:watch": "npm run build:server && concurrently \"vite --configLoader runner --host 0.0.0.0\" \"tsc -p server/tsconfig.json --watch\" \"node --watch dist-server/index.js\"",
+    "build:server": "tsc -p server/tsconfig.json",
+    "build": "prisma generate && npm run build:server && vite build --configLoader runner",
+    "start": "node dist-server/index.js",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:seed": "node --experimental-strip-types prisma/seed.ts",
+    "test": "node --experimental-strip-types --test tests/orderRules.test.ts",
+    "test:integration": "node --experimental-strip-types tests/integration.ts",
+    "typecheck": "tsc --noEmit && tsc -p server/tsconfig.json --noEmit && tsc -p api/tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.0",
+    "argon2": "^0.44.0",
+    "cookie-parser": "^1.4.7",
+    "express": "^5.1.0",
+    "helmet": "^8.1.0",
+    "lucide-react": "^0.468.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router-dom": "^7.9.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "@types/cookie-parser": "^1.4.9",
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.18.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "concurrently": "^9.2.1",
+    "prisma": "^6.19.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.1.0"
+  }
+}

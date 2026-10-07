@@ -1,0 +1,143 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  OWNER
+  MANAGER
+  STAFF
+}
+
+enum OrderStatus {
+  DRAFT
+  CONFIRMED
+  FULFILLED
+  CANCELLED
+}
+
+enum MovementType {
+  IN
+  ADJUSTMENT
+  SALE
+  RETURN
+}
+
+model Store {
+  id String @id @default(cuid())
+  name String
+  createdAt DateTime @default(now())
+  users User[]
+  products Product[]
+  orders Order[]
+  movements StockMovement[]
+  auditLogs AuditLog[]
+}
+
+model User {
+  id String @id @default(cuid())
+  storeId String
+  store Store @relation(fields: [storeId], references: [id])
+  name String
+  email String @unique
+  passwordHash String
+  role Role
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  sessions Session[]
+  movements StockMovement[]
+  auditLogs AuditLog[]
+  @@index([storeId])
+}
+
+model Session {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  @@index([userId])
+}
+
+model Product {
+  id String @id @default(cuid())
+  storeId String
+  store Store @relation(fields: [storeId], references: [id])
+  sku String
+  name String
+  category String?
+  price Int
+  stock Int @default(0)
+  minStock Int @default(5)
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  items OrderItem[]
+  movements StockMovement[]
+  @@unique([storeId, sku])
+  @@index([storeId, name])
+}
+
+model Order {
+  id String @id @default(cuid())
+  storeId String
+  store Store @relation(fields: [storeId], references: [id])
+  number String
+  customerName String
+  status OrderStatus @default(DRAFT)
+  total Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  items OrderItem[]
+  movements StockMovement[]
+  @@unique([storeId, number])
+  @@index([storeId, status, createdAt])
+}
+
+model OrderItem {
+  id String @id @default(cuid())
+  orderId String
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String
+  product Product @relation(fields: [productId], references: [id])
+  quantity Int
+  unitPrice Int
+  @@unique([orderId, productId])
+}
+
+model StockMovement {
+  id String @id @default(cuid())
+  storeId String
+  store Store @relation(fields: [storeId], references: [id])
+  productId String
+  product Product @relation(fields: [productId], references: [id])
+  orderId String?
+  order Order? @relation(fields: [orderId], references: [id])
+  userId String
+  user User @relation(fields: [userId], references: [id])
+  type MovementType
+  quantity Int
+  balanceAfter Int
+  reason String
+  createdAt DateTime @default(now())
+  @@index([storeId, createdAt])
+}
+
+model AuditLog {
+  id String @id @default(cuid())
+  storeId String
+  store Store @relation(fields: [storeId], references: [id])
+  userId String
+  user User @relation(fields: [userId], references: [id])
+  action String
+  entity String
+  entityId String
+  createdAt DateTime @default(now())
+  @@index([storeId, createdAt])
+}
