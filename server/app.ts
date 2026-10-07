@@ -9,6 +9,7 @@ import { PrismaClient, Prisma, Role, OrderStatus } from '@prisma/client'
 import { z, ZodError } from 'zod'
 import { orderTransition } from './orderRules.js'
 import { buildOrderWorkbook } from './reportWorkbook.js'
+import { cleanupExpiredDemos, createDemoSandbox, demoAge, demoHasCapacity } from './demoSandbox.js'
 
 if (fs.existsSync('.env')) loadEnvFile('.env')
 export const db = new PrismaClient()
@@ -21,7 +22,7 @@ class ApiError extends Error {
   constructor(public status: number, message: string) { super(message) }
 }
 
-type Identity = { id: string; storeId: string; role: Role; name: string; email: string; storeName: string }
+type Identity = { id: string; storeId: string; role: Role; name: string; email: string; storeName: string; isDemo: boolean }
 type AuthedRequest = Request & { identity?: Identity; sessionToken?: string }
 const identity = (req: Request): Identity => {
   const value = (req as AuthedRequest).identity
@@ -33,6 +34,13 @@ const int = z.coerce.number().int()
 const pageSchema = z.object({ page: int.min(1).default(1), limit: int.min(1).max(100).default(20), search: z.string().trim().max(100).default('') })
 const productBody = z.object({ sku: z.string().trim().min(1).max(40), name: z.string().trim().min(2).max(120), category: z.string().trim().max(80).optional().nullable(), price: int.min(0).max(1_000_000_000), minStock: int.min(0).max(1_000_000), active: z.boolean().optional() })
 const publicUser = (user: { id: string; name: string; email: string; role: Role; active: boolean }) => ({ id: user.id, name: user.name, email: user.email, role: user.role, active: user.active })
+async function issueSession(res: Response, user: { id: string; name: string; email: string; role: Role; active: boolean }, store: { id: string; name: string; isDemo: boolean; demoExpiresAt: Date | null }, age: number) {
+  const token = randomBytes(32).toString('hex')
+  await db.session.create({ data: { userId: user.id, tokenHash: tokenHash(token), expiresAt: new Date(Date.now() + age) } })
+  res.cookie('stokita_session', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: age, path: '/' })
+  res.setHeader('Cache-Control', 'no-store')
+  res.json({ user: publicUser(user), store: { id: store.id, name: store.name, isDemo: store.isDemo, demoExpiresAt: store.demoExpiresAt } })
+}
 
 app.disable('x-powered-by')
 app.use(helmet({ contentSecurityPolicy: false }))
@@ -55,10 +63,15 @@ app.post('/api/auth/login', async (req, res) => {
   const body = parse(z.object({ email: z.email(), password: z.string().min(1) }), req.body)
   const user = await db.user.findUnique({ where: { email: body.email.toLowerCase() }, include: { store: true } })
   if (!user || !user.active || !(await argon2.verify(user.passwordHash, body.password))) throw new ApiError(401, 'Email atau kata sandi salah.')
-  const token = randomBytes(32).toString('hex')
-  await db.session.create({ data: { userId: user.id, tokenHash: tokenHash(token), expiresAt: new Date(Date.now() + sessionAge) } })
-  res.cookie('stokita_session', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: sessionAge, path: '/' })
-  res.json({ user: publicUser(user), store: { id: user.store.id, name: user.store.name } })
+  await issueSession(res, user, user.store, sessionAge)
+})
+app.post('/api/auth/demo', async (req, res) => {
+  const { role } = parse(z.object({ role: z.enum(['OWNER', 'MANAGER', 'STAFF']) }), req.body)
+  await cleanupExpiredDemos(db)
+  if (!(await demoHasCapacity(db))) throw new ApiError(429, 'Ruang demo sedang penuh. Silakan coba beberapa saat lagi.')
+  const { user, store } = await createDemoSandbox(db, role)
+  res.status(201)
+  await issueSession(res, user, store, demoAge)
 })
 
 app.use('/api', async (req: AuthedRequest, _res, next) => {
@@ -66,13 +79,13 @@ app.use('/api', async (req: AuthedRequest, _res, next) => {
     const token = req.cookies?.stokita_session
     if (!token || typeof token !== 'string') throw new ApiError(401, 'Silakan masuk terlebih dahulu.')
     const session = await db.session.findUnique({ where: { tokenHash: tokenHash(token) }, include: { user: { include: { store: true } } } })
-    if (!session || session.expiresAt <= new Date() || !session.user.active) throw new ApiError(401, 'Sesi berakhir. Silakan masuk kembali.')
-    req.identity = { id: session.user.id, storeId: session.user.storeId, role: session.user.role, name: session.user.name, email: session.user.email, storeName: session.user.store.name }
+    if (!session || session.expiresAt <= new Date() || !session.user.active || (session.user.store.isDemo && (!session.user.store.demoExpiresAt || session.user.store.demoExpiresAt <= new Date()))) throw new ApiError(401, 'Sesi berakhir. Silakan masuk kembali.')
+    req.identity = { id: session.user.id, storeId: session.user.storeId, role: session.user.role, name: session.user.name, email: session.user.email, storeName: session.user.store.name, isDemo: session.user.store.isDemo }
     req.sessionToken = token
     next()
   } catch (error) { next(error) }
 })
-app.get('/api/auth/me', (req, res) => { const me = identity(req); res.json({ user: { id: me.id, name: me.name, email: me.email, role: me.role }, store: { id: me.storeId, name: me.storeName } }) })
+app.get('/api/auth/me', (req, res) => { const me = identity(req); res.setHeader('Cache-Control', 'no-store'); res.json({ user: { id: me.id, name: me.name, email: me.email, role: me.role }, store: { id: me.storeId, name: me.storeName, isDemo: me.isDemo } }) })
 app.post('/api/auth/logout', async (req: AuthedRequest, res) => {
   if (req.sessionToken) await db.session.deleteMany({ where: { tokenHash: tokenHash(req.sessionToken) } })
   res.clearCookie('stokita_session', { path: '/' })
@@ -91,6 +104,7 @@ app.get('/api/users', requireRole('OWNER'), async (req, res) => {
 })
 app.post('/api/users', requireRole('OWNER'), async (req, res) => {
   const me = identity(req)
+  if (me.isDemo && await db.user.count({ where: { storeId: me.storeId } }) >= 8) throw new ApiError(429, 'Batas pengguna ruang demo tercapai.')
   const body = parse(z.object({ name: z.string().trim().min(2).max(100), email: z.email(), password: z.string().min(12).max(128), role: z.enum(['MANAGER', 'STAFF']) }), req.body)
   const user = await db.$transaction(async tx => {
     const created = await tx.user.create({ data: { storeId: me.storeId, name: body.name, email: body.email.toLowerCase(), passwordHash: await argon2.hash(body.password), role: body.role } })
@@ -125,6 +139,7 @@ app.get('/api/products', async (req, res) => {
 })
 app.post('/api/products', requireRole('OWNER', 'MANAGER'), async (req, res) => {
   const me = identity(req)
+  if (me.isDemo && await db.product.count({ where: { storeId: me.storeId } }) >= 30) throw new ApiError(429, 'Batas produk ruang demo tercapai.')
   const body = parse(productBody, req.body)
   const item = await db.$transaction(async tx => {
     const created = await tx.product.create({ data: { storeId: me.storeId, sku: body.sku.toUpperCase(), name: body.name, category: body.category || null, price: body.price, minStock: body.minStock, active: body.active ?? true } })
@@ -156,6 +171,7 @@ app.get('/api/stock-movements', async (req, res) => {
 })
 app.post('/api/stock-movements', async (req, res) => {
   const me = identity(req)
+  if (me.isDemo && await db.stockMovement.count({ where: { storeId: me.storeId } }) >= 200) throw new ApiError(429, 'Batas catatan stok ruang demo tercapai.')
   const body = parse(z.object({ productId: z.string().min(1), type: z.enum(['IN', 'ADJUSTMENT']), quantity: int.min(-1_000_000).max(1_000_000), reason: z.string().trim().min(3).max(200) }), req.body)
   if (body.type === 'IN' && body.quantity <= 0) throw new ApiError(400, 'Stok masuk harus lebih dari nol.')
   if (body.type === 'ADJUSTMENT' && body.quantity === 0) throw new ApiError(400, 'Koreksi stok tidak boleh nol.')
@@ -182,6 +198,7 @@ app.get('/api/orders', async (req, res) => {
 })
 app.post('/api/orders', async (req, res) => {
   const me = identity(req)
+  if (me.isDemo && await db.order.count({ where: { storeId: me.storeId } }) >= 60) throw new ApiError(429, 'Batas pesanan ruang demo tercapai.')
   const body = parse(z.object({ customerName: z.string().trim().min(2).max(100), items: z.array(z.object({ productId: z.string().min(1), quantity: int.min(1).max(100000) })).min(1).max(50) }), req.body)
   if (new Set(body.items.map(x => x.productId)).size !== body.items.length) throw new ApiError(400, 'Produk yang sama hanya boleh muncul sekali.')
   const products = await db.product.findMany({ where: { id: { in: body.items.map(x => x.productId) }, storeId: me.storeId, active: true } })
