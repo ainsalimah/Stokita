@@ -16,6 +16,7 @@ describe('unduhan laporan Excel', () => {
     assert.equal(sheet.getCell('A1').value, 'LAPORAN PESANAN')
     assert.equal(sheet.getCell('A3').value, 'Toko: Toko Maju')
     assert.equal(sheet.getCell('D7').value, 125000)
+    assert.equal(sheet.getCell('D7').alignment?.horizontal, 'right')
     assert.ok(sheet.getCell('E7').value instanceof Date)
     assert.equal(sheet.getCell('C7').value, 'Dikonfirmasi')
     assert.equal(sheet.getCell('C8').value, 'Dibatalkan')
