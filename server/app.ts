@@ -241,6 +241,46 @@ app.get('/api/reports/summary', async (req, res) => {
   ])
   res.json({ products, lowStock: Number(lowStock[0].count), orders, confirmed, revenue: revenue._sum.total || 0, recent })
 })
+app.get('/api/dashboard', async (req, res) => {
+  const me = identity(req)
+  const storeId = me.storeId
+  const lowStockWhere = Prisma.sql`"storeId" = ${storeId} AND active = true AND stock <= "minStock"`
+  const lowStockProducts = () => db.$queryRaw<Array<{ id: string; name: string; sku: string; stock: number; minStock: number }>>`
+    SELECT id, name, sku, stock, "minStock" FROM "Product"
+    WHERE ${lowStockWhere} ORDER BY stock ASC, name ASC LIMIT 5
+  `
+  const lowStockCount = async () => Number((await db.$queryRaw<Array<{ count: bigint }>>`
+    SELECT COUNT(*)::bigint AS count FROM "Product" WHERE ${lowStockWhere}
+  `)[0].count)
+
+  if (me.role === 'OWNER') {
+    const [products, lowStock, orders, confirmed, revenue, activeUsers, recent] = await Promise.all([
+      db.product.count({ where: { storeId, active: true } }), lowStockCount(),
+      db.order.count({ where: { storeId } }),
+      db.order.count({ where: { storeId, status: { in: ['CONFIRMED', 'FULFILLED'] } } }),
+      db.order.aggregate({ where: { storeId, status: { in: ['CONFIRMED', 'FULFILLED'] } }, _sum: { total: true } }),
+      db.user.count({ where: { storeId, active: true } }),
+      db.auditLog.findMany({ where: { storeId }, include: { user: { select: { name: true } } }, orderBy: { createdAt: 'desc' }, take: 6 })
+    ])
+    return res.json({ role: me.role, products, lowStock, orders, confirmed, revenue: revenue._sum.total || 0, activeUsers, recent })
+  }
+
+  const [lowStock, products, draftOrders, confirmedOrders] = await Promise.all([
+    lowStockCount(), lowStockProducts(),
+    db.order.count({ where: { storeId, status: 'DRAFT' } }),
+    db.order.count({ where: { storeId, status: 'CONFIRMED' } })
+  ])
+  if (me.role === 'MANAGER') {
+    const recent = await db.auditLog.findMany({ where: { storeId }, include: { user: { select: { name: true } } }, orderBy: { createdAt: 'desc' }, take: 6 })
+    return res.json({ role: me.role, lowStock, lowStockProducts: products, draftOrders, confirmedOrders, recent })
+  }
+  const queue = await db.order.findMany({
+    where: { storeId, status: { in: ['DRAFT', 'CONFIRMED'] } },
+    select: { id: true, number: true, customerName: true, status: true, createdAt: true },
+    orderBy: { createdAt: 'asc' }, take: 6
+  })
+  return res.json({ role: me.role, lowStock, lowStockProducts: products, draftOrders, confirmedOrders, queue })
+})
 app.get('/api/reports/orders.xlsx', async (req, res) => {
   const me = identity(req)
   const orders = await db.order.findMany({ where: { storeId: me.storeId }, orderBy: { createdAt: 'desc' } })
