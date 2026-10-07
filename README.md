@@ -1,8 +1,12 @@
 # Stokita
 
-**Inventaris dan pesanan multi-toko dalam satu alur kerja.** Stokita adalah proyek portofolio full stack untuk membantu tim toko mencatat stok, memproses pesanan, dan membaca kondisi operasional dari data yang sama.
+**Inventaris dan pesanan untuk banyak toko dengan data yang terpisah.** Stokita adalah proyek portofolio full stack untuk membantu tim di satu toko mencatat stok, memproses pesanan, dan membaca kondisi operasional dari data yang sama.
 
 [Coba aplikasi](https://stokita-two.vercel.app) · [Lihat kode](https://github.com/ainsalimah/Stokita)
+
+## Arti multi-toko di Stokita
+
+Setiap toko memiliki produk, pesanan, stok, laporan, dan pengguna sendiri. Satu akun hanya terhubung ke satu toko. Contohnya, jika Ain mempunyai Toko A, Toko B, dan Toko C, Ain perlu akun owner terpisah di tiap toko dan masuk ke akun yang sesuai untuk mengelolanya. Versi ini belum menyediakan satu akun untuk berpindah toko atau melihat laporan gabungan ketiganya.
 
 ## Masalah
 
@@ -16,7 +20,7 @@ Stokita menghubungkan katalog produk, catatan pergerakan stok, pesanan, dan lapo
 - **Pesanan dengan aturan stok.** Pesanan dimulai sebagai draft. Saat dikonfirmasi, sistem memeriksa ketersediaan dan mengurangi stok dalam satu transaksi. Pembatalan pesanan yang belum selesai mengembalikan stok.
 - **Ruang kerja sesuai peran.** Pemilik melihat kinerja dan tim, manajer melihat prioritas stok dan pesanan, sedangkan staf melihat antrean pekerjaan toko.
 - **Laporan siap dibagikan.** Ringkasan operasional tersedia di aplikasi dan daftar pesanan dapat diunduh sebagai file Excel berformat.
-- **Data antartoko terpisah.** API menentukan toko dari sesi pengguna, bukan dari ID toko yang dikirim browser.
+- **Data antartoko terpisah.** API menentukan toko dari sesi pengguna, bukan dari ID toko yang dikirim browser. Pengguna satu toko tidak dapat membaca data toko lain.
 
 ## Coba demo
 
