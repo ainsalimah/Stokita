@@ -27,6 +27,7 @@ Seed aman dijalankan ulang: akun, produk, dan pesanan contoh tidak digandakan. U
 ## Alur dan aturan bisnis
 
 - `OWNER` mengelola pengguna dan produk. `MANAGER` mengelola produk. `STAFF` dapat mencatat stok dan pesanan. Semua peran dapat melihat laporan toko sendiri.
+- Dashboard menyesuaikan peran: owner melihat kinerja dan tim, manager melihat prioritas stok serta pesanan, dan staff melihat antrean pesanan serta tindakan operasional. Antrean adalah pesanan toko, bukan tugas pribadi.
 - Setiap permintaan membaca identitas toko dari sesi pada cookie `HttpOnly`; ID toko dari browser tidak dipercaya.
 - SKU unik dalam satu toko. Stok bertambah melalui `IN` atau koreksi positif, dan dapat berkurang melalui koreksi negatif selama saldo tetap tidak negatif.
 - Pesanan dibuat sebagai `DRAFT`. Konfirmasi mengurangi stok dan membuat catatan pergerakan. Konfirmasi berulang mengembalikan status yang sama tanpa mengurangi stok lagi.
@@ -64,6 +65,7 @@ Semua endpoint di bawah memakai prefix `/api`. Selain login dan health, semuanya
 | POST | `/orders/:id/confirm` | Konfirmasi dan kurangi stok |
 | POST | `/orders/:id/cancel` | Batalkan dan kembalikan stok |
 | POST | `/orders/:id/fulfill` | Tandai selesai |
+| GET | `/dashboard` | Ringkasan sesuai peran pengguna dari sesi; data selalu dibatasi ke toko pengguna |
 | GET | `/reports/summary`, `/reports/orders.xlsx` | Ringkasan dan Excel berformat |
 
 Endpoint daftar produk dan pesanan menerima `page`, `limit`, `search`; pesanan juga menerima `status`. Kesalahan dikembalikan sebagai `{ "error": "..." }`, dan validasi dapat memuat `details` per field.

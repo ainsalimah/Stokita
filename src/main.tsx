@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter, NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import { LayoutDashboard, Package, ClipboardList, ArrowDownUp, Users, BarChart3, LogOut, Plus, Search, Menu, X, Download, ChevronLeft, ChevronRight, ShieldCheck, Store, AlertCircle, CheckCircle2 } from 'lucide-react'
 import './style.css'
+import './dashboard.css'
 
 type Role = 'OWNER' | 'MANAGER' | 'STAFF'
 type User = { id: string; name: string; email: string; role: Role; active?: boolean }
@@ -11,6 +12,12 @@ type OrderItem = { id: string; productId: string; quantity: number; unitPrice: n
 type Order = { id: string; number: string; customerName: string; status: 'DRAFT' | 'CONFIRMED' | 'FULFILLED' | 'CANCELLED'; total: number; createdAt: string; items: OrderItem[] }
 type Movement = { id: string; type: string; quantity: number; balanceAfter: number; reason: string; createdAt: string; product: { name: string; sku: string }; user: { name: string } }
 type Summary = { products: number; lowStock: number; orders: number; confirmed: number; revenue: number; recent: { id: string; action: string; entity: string; createdAt: string; user: { name: string } }[] }
+type RecentActivity = Summary['recent'][number]
+type LowStockProduct = Pick<Product, 'id' | 'name' | 'sku' | 'stock' | 'minStock'>
+type OwnerDashboard = { role: 'OWNER'; products: number; lowStock: number; orders: number; confirmed: number; revenue: number; activeUsers: number; recent: RecentActivity[] }
+type ManagerDashboard = { role: 'MANAGER'; lowStock: number; lowStockProducts: LowStockProduct[]; draftOrders: number; confirmedOrders: number; recent: RecentActivity[] }
+type StaffDashboard = { role: 'STAFF'; lowStock: number; lowStockProducts: LowStockProduct[]; draftOrders: number; confirmedOrders: number; queue: Pick<Order, 'id' | 'number' | 'customerName' | 'status' | 'createdAt'>[] }
+type DashboardData = OwnerDashboard | ManagerDashboard | StaffDashboard
 type PageData<T> = { items: T[]; total: number; page: number; limit: number }
 
 const money = (value: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value)
@@ -58,13 +65,58 @@ function Login({ onLogin }: { onLogin: (user: User, store: { name: string }) => 
 const nav = [{ to: '/', label: 'Ringkasan', icon: LayoutDashboard }, { to: '/products', label: 'Produk', icon: Package }, { to: '/stock', label: 'Pergerakan stok', icon: ArrowDownUp }, { to: '/orders', label: 'Pesanan', icon: ClipboardList }, { to: '/reports', label: 'Laporan', icon: BarChart3 }, { to: '/users', label: 'Pengguna', icon: Users }]
 function Shell({ user, store, onLogout }: { user: User; store: { name: string }; onLogout: () => void }) {
   const [open, setOpen] = useState(false)
-  return <div className="app-shell"><aside className={`sidebar ${open ? 'open' : ''}`}><div className="sidebar-top"><div className="brand"><span className="brand-mark"><Package size={21}/></span>stokita<span className="brand-dot">.</span></div><button className="mobile-close icon-button" onClick={() => setOpen(false)} aria-label="Tutup menu"><X size={20}/></button></div><div className="workspace"><div className="workspace-icon"><Store size={20}/></div><div><small>RUANG KERJA</small><strong>{store.name}</strong></div></div><div className="nav-label">MENU UTAMA</div><nav>{nav.filter(item => item.to !== '/users' || user.role === 'OWNER').map(item => <NavLink key={item.to} to={item.to} end={item.to === '/'} onClick={() => setOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}><item.icon size={19}/>{item.label}</NavLink>)}</nav><div className="sidebar-bottom"><div className="profile"><div className="avatar">{user.name.charAt(0).toUpperCase()}</div><div><strong>{user.name}</strong><small>{roleText[user.role]}</small></div></div><button className="nav-item logout" onClick={onLogout}><LogOut size={18}/>Keluar</button></div></aside><div className="main-area"><header className="topbar"><button className="mobile-menu icon-button" onClick={() => setOpen(true)} aria-label="Buka menu"><Menu size={22}/></button><div className="breadcrumb">Workspace <span>/</span> {store.name}</div><div className="topbar-right"><span className="live-dot"/>Sistem aktif <span className="topbar-sep"/> {user.name}</div></header><main className="content"><Routes><Route path="/" element={<Dashboard/>}/><Route path="/products" element={<Products role={user.role}/>}/><Route path="/stock" element={<Stock/>}/><Route path="/orders" element={<Orders/>}/><Route path="/reports" element={<Reports/>}/><Route path="/users" element={user.role === 'OWNER' ? <UsersPage/> : <Navigate to="/"/>}/><Route path="*" element={<Navigate to="/"/>}/></Routes></main></div>{open && <div className="scrim" onClick={() => setOpen(false)}/>}</div>
+  return <div className="app-shell"><aside className={`sidebar ${open ? 'open' : ''}`}><div className="sidebar-top"><div className="brand"><span className="brand-mark"><Package size={21}/></span>stokita<span className="brand-dot">.</span></div><button className="mobile-close icon-button" onClick={() => setOpen(false)} aria-label="Tutup menu"><X size={20}/></button></div><div className="workspace"><div className="workspace-icon"><Store size={20}/></div><div><small>RUANG KERJA</small><strong>{store.name}</strong></div></div><div className="nav-label">MENU UTAMA</div><nav>{nav.filter(item => item.to !== '/users' || user.role === 'OWNER').map(item => <NavLink key={item.to} to={item.to} end={item.to === '/'} onClick={() => setOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}><item.icon size={19}/>{item.label}</NavLink>)}</nav><div className="sidebar-bottom"><div className="profile"><div className="avatar">{user.name.charAt(0).toUpperCase()}</div><div><strong>{user.name}</strong><small>{roleText[user.role]}</small></div></div><button className="nav-item logout" onClick={onLogout}><LogOut size={18}/>Keluar</button></div></aside><div className="main-area"><header className="topbar"><button className="mobile-menu icon-button" onClick={() => setOpen(true)} aria-label="Buka menu"><Menu size={22}/></button><div className="breadcrumb">Workspace <span>/</span> {store.name}</div><div className="topbar-right"><span className="live-dot"/>Sistem aktif <span className="topbar-sep"/> {user.name}</div></header><main className="content"><Routes><Route path="/" element={<Dashboard role={user.role}/>}/><Route path="/products" element={<Products role={user.role}/>}/><Route path="/stock" element={<Stock/>}/><Route path="/orders" element={<Orders/>}/><Route path="/reports" element={<Reports/>}/><Route path="/users" element={user.role === 'OWNER' ? <UsersPage/> : <Navigate to="/"/>}/><Route path="*" element={<Navigate to="/"/>}/></Routes></main></div>{open && <div className="scrim" onClick={() => setOpen(false)}/>}</div>
 }
 
-function Dashboard() {
-  const { data, loading, error } = useData<Summary>('/reports/summary')
+function ActivityPanel({ items }: { items: RecentActivity[] }) {
+  return <section className="panel"><div className="panel-heading"><div><p className="eyebrow">JEJAK AKTIVITAS</p><h2>Aktivitas terbaru</h2></div></div>{items.length ? <div className="activity-list">{items.map(item => <div className="activity" key={item.id}><span className="activity-icon"><ArrowDownUp size={17}/></span><div><strong>{item.user.name} • {item.action.toLowerCase()} {item.entity.toLowerCase()}</strong><small>{date(item.createdAt)}</small></div></div>)}</div> : <Empty title="Belum ada aktivitas" detail="Aktivitas toko akan tampil di sini."/>}</section>
+}
+
+function LowStockPanel({ items, onOpen }: { items: LowStockProduct[]; onOpen: () => void }) {
+  return <section className="panel"><div className="panel-heading"><div><p className="eyebrow">PERLU PERHATIAN</p><h2>Produk stok menipis</h2></div><button className="text-button" onClick={onOpen}>Lihat produk</button></div>{items.length ? <div className="dashboard-list">{items.map(item => <div className="dashboard-row" key={item.id}><div><strong>{item.name}</strong><small>{item.sku}</small></div><span className="stock-value low">{item.stock} / batas {item.minStock}</span></div>)}</div> : <Empty title="Stok aman" detail="Belum ada produk di bawah batas minimum."/>}</section>
+}
+
+function Dashboard({ role }: { role: Role }) {
+  const { data, loading, error } = useData<DashboardData>('/dashboard')
   const navigate = useNavigate()
-  return <><SectionHeader eyebrow="OVERVIEW" title="Ringkasan toko" description="Pantau aktivitas dan kesehatan operasional hari ini." action={<button className="button primary" onClick={() => navigate('/orders')}><Plus size={18}/> Pesanan baru</button>}/><Notice message={error}/>{loading ? <Loading/> : data && <><div className="stat-grid"><div className="stat-card"><span>Total produk</span><strong>{data.products}</strong><small>Produk aktif dalam katalog</small><Package size={23}/></div><div className="stat-card warning"><span>Stok menipis</span><strong>{data.lowStock}</strong><small>Perlu perhatian</small><AlertCircle size={23}/></div><div className="stat-card"><span>Total pesanan</span><strong>{data.orders}</strong><small>{data.confirmed} dikonfirmasi / selesai</small><ClipboardList size={23}/></div><div className="stat-card highlight"><span>Nilai pesanan aktif</span><strong className="money-stat">{money(data.revenue)}</strong><small>Pesanan dikonfirmasi & selesai</small><BarChart3 size={23}/></div></div><div className="dashboard-lower"><section className="panel"><div className="panel-heading"><div><p className="eyebrow">JEJAK AKTIVITAS</p><h2>Aktivitas terbaru</h2></div></div>{data.recent.length ? <div className="activity-list">{data.recent.map(item => <div className="activity" key={item.id}><span className="activity-icon"><ArrowDownUp size={17}/></span><div><strong>{item.user.name} • {item.action.toLowerCase()} {item.entity.toLowerCase()}</strong><small>{date(item.createdAt)}</small></div></div>)}</div> : <Empty title="Belum ada aktivitas" detail="Aktivitas toko akan tampil di sini."/>}</section><section className="quick-panel"><p className="eyebrow">AKSI CEPAT</p><h2>Jaga alur tetap bergerak.</h2><p>Kelola produk, catat stok masuk, lalu lanjutkan pesanan tanpa berpindah alat.</p><button onClick={() => navigate('/products')}>Lihat katalog produk <ChevronRight size={18}/></button><button onClick={() => navigate('/stock')}>Catat pergerakan stok <ChevronRight size={18}/></button></section></div></>}</>
+  if (loading) return <><SectionHeader eyebrow="RUANG KERJA" title="Ringkasan toko" description="Memuat informasi toko Anda."/><Loading/></>
+  if (error || !data) return <><SectionHeader eyebrow="RUANG KERJA" title="Ringkasan toko" description="Informasi toko belum tersedia."/><Notice message={error || 'Dashboard belum dapat dimuat.'}/></>
+  if (data.role !== role) return <Notice message="Sesi berubah. Muat ulang halaman untuk melihat dashboard terbaru."/>
+
+  if (data.role === 'OWNER') return <>
+    <SectionHeader eyebrow="UNTUK PEMILIK" title="Kondisi toko" description="Pantau kinerja dan tim toko dalam satu tempat."/>
+    <div className="dashboard-actions"><button className="button primary" onClick={() => navigate('/reports')}><BarChart3 size={18}/> Lihat laporan</button><button className="button subtle" onClick={() => navigate('/users')}><Users size={18}/> Kelola pengguna</button></div>
+    <div className="dashboard-stats">
+      <div className="stat-card"><span>Produk aktif</span><strong>{data.products}</strong><small>Dalam katalog</small><Package size={23}/></div>
+      <div className="stat-card warning"><span>Stok menipis</span><strong>{data.lowStock}</strong><small>Perlu perhatian</small><AlertCircle size={23}/></div>
+      <div className="stat-card"><span>Total pesanan</span><strong>{data.orders}</strong><small>{data.confirmed} dikonfirmasi / selesai</small><ClipboardList size={23}/></div>
+      <div className="stat-card highlight"><span>Nilai pesanan aktif</span><strong className="money-stat">{money(data.revenue)}</strong><small>Dikonfirmasi & selesai</small><BarChart3 size={23}/></div>
+      <div className="stat-card"><span>Pengguna aktif</span><strong>{data.activeUsers}</strong><small>Tim toko yang dapat masuk</small><Users size={23}/></div>
+    </div>
+    <div className="dashboard-panels"><ActivityPanel items={data.recent}/><section className="quick-panel"><p className="eyebrow">LANGKAH BERIKUTNYA</p><h2>Ambil keputusan dari data toko.</h2><p>Periksa pesanan dan stok sebelum merencanakan langkah berikutnya.</p><button onClick={() => navigate('/orders')}>Lihat pesanan <ChevronRight size={18}/></button><button onClick={() => navigate('/products')}>Lihat produk <ChevronRight size={18}/></button></section></div>
+  </>
+
+  if (data.role === 'MANAGER') return <>
+    <SectionHeader eyebrow="UNTUK MANAJER" title="Operasional toko" description="Prioritaskan stok dan pesanan yang perlu ditangani."/>
+    <div className="dashboard-actions"><button className="button primary" onClick={() => navigate('/products')}><Package size={18}/> Kelola produk</button><button className="button subtle" onClick={() => navigate('/stock')}><ArrowDownUp size={18}/> Lihat stok</button><button className="button subtle" onClick={() => navigate('/orders')}><ClipboardList size={18}/> Lihat pesanan</button></div>
+    <div className="dashboard-stats">
+      <div className="stat-card warning"><span>Stok menipis</span><strong>{data.lowStock}</strong><small>Produk perlu perhatian</small><AlertCircle size={23}/></div>
+      <div className="stat-card"><span>Pesanan draft</span><strong>{data.draftOrders}</strong><small>Menunggu konfirmasi</small><ClipboardList size={23}/></div>
+      <div className="stat-card"><span>Pesanan dikonfirmasi</span><strong>{data.confirmedOrders}</strong><small>Menunggu penyelesaian</small><CheckCircle2 size={23}/></div>
+    </div>
+    <div className="dashboard-panels"><LowStockPanel items={data.lowStockProducts} onOpen={() => navigate('/products')}/><ActivityPanel items={data.recent}/></div>
+  </>
+
+  return <>
+    <SectionHeader eyebrow="UNTUK STAF" title="Pekerjaan toko" description="Lihat antrean pesanan dan stok yang perlu diperhatikan."/>
+    <div className="dashboard-actions"><button className="button primary" onClick={() => navigate('/orders?new=1')}><Plus size={18}/> Buat pesanan</button><button className="button subtle" onClick={() => navigate('/stock?new=1')}><ArrowDownUp size={18}/> Catat stok</button></div>
+    <div className="dashboard-stats">
+      <div className="stat-card"><span>Pesanan draft</span><strong>{data.draftOrders}</strong><small>Perlu dikonfirmasi</small><ClipboardList size={23}/></div>
+      <div className="stat-card"><span>Pesanan dikonfirmasi</span><strong>{data.confirmedOrders}</strong><small>Perlu diselesaikan</small><CheckCircle2 size={23}/></div>
+      <div className="stat-card warning"><span>Stok menipis</span><strong>{data.lowStock}</strong><small>Perlu diperhatikan</small><AlertCircle size={23}/></div>
+    </div>
+    <div className="dashboard-panels"><section className="panel"><div className="panel-heading"><div><p className="eyebrow">ANTREAN TOKO</p><h2>Pesanan yang perlu ditangani</h2></div><button className="text-button" onClick={() => navigate('/orders')}>Lihat semua</button></div>{data.queue.length ? <div className="dashboard-list">{data.queue.map(order => <div className="dashboard-row" key={order.id}><div><strong>{order.number}</strong><small>{order.customerName} • {date(order.createdAt)}</small></div><span className={`badge status-${order.status.toLowerCase()}`}>{statusText[order.status]}</span></div>)}</div> : <Empty title="Antrean kosong" detail="Belum ada pesanan yang perlu ditangani."/>}</section><LowStockPanel items={data.lowStockProducts} onOpen={() => navigate('/products')}/></div>
+  </>
 }
 
 function Products({ role }: { role: Role }) {
@@ -77,7 +129,7 @@ function Products({ role }: { role: Role }) {
 }
 
 function Stock() {
-  const [page, setPage] = useState(1), [refresh, setRefresh] = useState(0), [show, setShow] = useState(false), [error, setError] = useState(''), [success, setSuccess] = useState('')
+  const [page, setPage] = useState(1), [refresh, setRefresh] = useState(0), [show, setShow] = useState(() => new URLSearchParams(window.location.search).has('new')), [error, setError] = useState(''), [success, setSuccess] = useState('')
   const { data, loading, error: loadError } = useData<PageData<Movement>>(`/stock-movements?page=${page}&limit=10`, refresh)
   const products = useData<PageData<Product>>('/products?limit=100', refresh)
   const [form, setForm] = useState({ productId: '', type: 'IN', quantity: 1, reason: '' })
@@ -86,7 +138,7 @@ function Stock() {
 }
 
 function Orders() {
-  const [page, setPage] = useState(1), [search, setSearch] = useState(''), [query, setQuery] = useState(''), [status, setStatus] = useState(''), [refresh, setRefresh] = useState(0), [show, setShow] = useState(false), [error, setError] = useState(''), [success, setSuccess] = useState(''), [busy, setBusy] = useState('')
+  const [page, setPage] = useState(1), [search, setSearch] = useState(''), [query, setQuery] = useState(''), [status, setStatus] = useState(''), [refresh, setRefresh] = useState(0), [show, setShow] = useState(() => new URLSearchParams(window.location.search).has('new')), [error, setError] = useState(''), [success, setSuccess] = useState(''), [busy, setBusy] = useState('')
   const { data, loading, error: loadError } = useData<PageData<Order>>(`/orders?page=${page}&limit=10&search=${encodeURIComponent(query)}${status ? `&status=${status}` : ''}`, refresh)
   const products = useData<PageData<Product>>('/products?limit=100')
   const [customerName, setCustomerName] = useState(''), [lines, setLines] = useState([{ productId: '', quantity: 1 }])
