@@ -9,6 +9,7 @@ import { PrismaClient, Prisma, Role, OrderStatus } from '@prisma/client'
 import { z, ZodError } from 'zod'
 import { orderTransition } from './orderRules.js'
 import { canFulfill, paymentTransition } from './paymentRules.js'
+import { transferTransition } from './transferRules.js'
 import { buildOrderWorkbook } from './reportWorkbook.js'
 import { cleanupExpiredDemos, createDemoSandbox, demoAge, demoHasCapacity } from './demoSandbox.js'
 
@@ -243,12 +244,103 @@ app.post('/api/stock-movements', async (req, res) => {
   res.status(201).json(movement)
 })
 
+const transferInclude = {
+  fromBranch: { select: { id: true, name: true, code: true } },
+  toBranch: { select: { id: true, name: true, code: true } },
+  createdBy: { select: { name: true } },
+  receivedBy: { select: { name: true } },
+  items: { include: { product: { select: { name: true, sku: true } } } }
+} as const
+
+app.get('/api/transfer-options', requireRole('OWNER', 'MANAGER'), async (req, res) => {
+  const me = identity(req)
+  const branches = await db.branch.findMany({ where: { storeId: me.storeId, active: true, id: { not: me.branchId } }, select: { id: true, name: true, code: true }, orderBy: { name: 'asc' } })
+  res.json(branches)
+})
+
+app.get('/api/transfers', requireRole('OWNER', 'MANAGER'), async (req, res) => {
+  const me = identity(req)
+  const { page, limit } = parse(pageSchema, req.query)
+  const where: Prisma.StockTransferWhereInput = { storeId: me.storeId, ...(me.role === 'OWNER' ? {} : { OR: [{ fromBranchId: me.branchId }, { toBranchId: me.branchId }] }) }
+  const [items, total] = await db.$transaction([
+    db.stockTransfer.findMany({ where, include: transferInclude, orderBy: { createdAt: 'desc' }, skip: (page - 1) * limit, take: limit }),
+    db.stockTransfer.count({ where })
+  ])
+  res.json({ items, total, page, limit })
+})
+
+app.post('/api/transfers', requireRole('OWNER', 'MANAGER'), async (req, res) => {
+  const me = identity(req)
+  if (me.isDemo && await db.stockTransfer.count({ where: { storeId: me.storeId } }) >= 40) throw new ApiError(429, 'Batas transfer ruang demo tercapai.')
+  const body = parse(z.object({
+    toBranchId: z.string().min(1),
+    note: z.string().trim().max(200).optional().nullable(),
+    items: z.array(z.object({ productId: z.string().min(1), quantity: int.min(1).max(1_000_000) })).min(1).max(50)
+  }), req.body)
+  if (body.toBranchId === me.branchId) throw new ApiError(400, 'Cabang tujuan harus berbeda dari cabang asal.')
+  if (new Set(body.items.map(item => item.productId)).size !== body.items.length) throw new ApiError(400, 'Produk yang sama hanya boleh muncul sekali.')
+  const transfer = await db.$transaction(async tx => {
+    const [destination, products] = await Promise.all([
+      tx.branch.findFirst({ where: { id: body.toBranchId, storeId: me.storeId, active: true } }),
+      tx.product.findMany({ where: { id: { in: body.items.map(item => item.productId) }, storeId: me.storeId, active: true }, select: { id: true } })
+    ])
+    if (!destination) throw new ApiError(404, 'Cabang tujuan tidak ditemukan.')
+    if (products.length !== body.items.length) throw new ApiError(400, 'Ada produk yang tidak tersedia.')
+    const created = await tx.stockTransfer.create({ data: {
+      storeId: me.storeId, number: `TRF-${Date.now().toString(36).toUpperCase()}-${randomBytes(3).toString('hex').toUpperCase()}`,
+      fromBranchId: me.branchId, toBranchId: destination.id, createdById: me.id, note: body.note || null,
+      items: { create: body.items }
+    }, include: transferInclude })
+    await audit(tx, me, 'CREATE', 'TRANSFER', created.id)
+    return created
+  })
+  res.status(201).json(transfer)
+})
+
+async function changeTransfer(req: Request, res: Response, action: 'send' | 'receive' | 'cancel') {
+  const me = identity(req)
+  const id = String(req.params.id)
+  const transfer = await db.$transaction(async tx => {
+    const current = await tx.stockTransfer.findFirst({ where: { id, storeId: me.storeId }, include: { items: true } })
+    if (!current) throw new ApiError(404, 'Transfer stok tidak ditemukan.')
+    if (action === 'receive' ? current.toBranchId !== me.branchId : current.fromBranchId !== me.branchId) throw new ApiError(403, 'Pilih cabang yang sesuai untuk tindakan ini.')
+    const transition = transferTransition(current.status, action)
+    if (transition === 'repeat') return tx.stockTransfer.findUniqueOrThrow({ where: { id }, include: transferInclude })
+    if (transition === 'invalid') throw new ApiError(409, 'Status transfer tidak mengizinkan tindakan ini.')
+
+    if (action === 'send') {
+      for (const item of [...current.items].sort((a, b) => a.productId.localeCompare(b.productId))) {
+        const changed = await tx.branchInventory.updateMany({ where: { branchId: current.fromBranchId, productId: item.productId, stock: { gte: item.quantity } }, data: { stock: { decrement: item.quantity } } })
+        if (changed.count !== 1) throw new ApiError(409, 'Stok cabang asal tidak mencukupi.')
+        const inventory = await tx.branchInventory.findUniqueOrThrow({ where: { branchId_productId: { branchId: current.fromBranchId, productId: item.productId } } })
+        await tx.stockMovement.create({ data: { storeId: me.storeId, branchId: current.fromBranchId, productId: item.productId, transferId: id, userId: me.id, type: 'TRANSFER_OUT', quantity: -item.quantity, balanceAfter: inventory.stock, reason: `Pengiriman transfer ${current.number}` } })
+      }
+    }
+    if (action === 'receive') {
+      for (const item of [...current.items].sort((a, b) => a.productId.localeCompare(b.productId))) {
+        const inventory = await tx.branchInventory.upsert({ where: { branchId_productId: { branchId: current.toBranchId, productId: item.productId } }, create: { storeId: me.storeId, branchId: current.toBranchId, productId: item.productId, stock: item.quantity }, update: { stock: { increment: item.quantity } } })
+        await tx.stockMovement.create({ data: { storeId: me.storeId, branchId: current.toBranchId, productId: item.productId, transferId: id, userId: me.id, type: 'TRANSFER_IN', quantity: item.quantity, balanceAfter: inventory.stock, reason: `Penerimaan transfer ${current.number}` } })
+      }
+    }
+    const nextStatus = action === 'send' ? 'IN_TRANSIT' : action === 'receive' ? 'RECEIVED' : 'CANCELLED'
+    const changed = await tx.stockTransfer.updateMany({ where: { id, status: current.status }, data: { status: nextStatus, ...(action === 'send' ? { sentAt: new Date() } : {}), ...(action === 'receive' ? { receivedAt: new Date(), receivedById: me.id } : {}) } })
+    if (changed.count !== 1) throw new ApiError(409, 'Transfer sudah berubah. Muat ulang halaman.')
+    await audit(tx, me, action.toUpperCase(), 'TRANSFER', id)
+    return tx.stockTransfer.findUniqueOrThrow({ where: { id }, include: transferInclude })
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
+  res.json(transfer)
+}
+
+app.post('/api/transfers/:id/send', requireRole('OWNER', 'MANAGER'), (req, res) => changeTransfer(req, res, 'send'))
+app.post('/api/transfers/:id/receive', requireRole('OWNER', 'MANAGER'), (req, res) => changeTransfer(req, res, 'receive'))
+app.post('/api/transfers/:id/cancel', requireRole('OWNER', 'MANAGER'), (req, res) => changeTransfer(req, res, 'cancel'))
+
 app.get('/api/orders', async (req, res) => {
   const me = identity(req)
   const { page, limit, search } = parse(pageSchema, req.query)
   const status = req.query.status ? parse(z.enum(['DRAFT', 'CONFIRMED', 'FULFILLED', 'CANCELLED']), req.query.status) : undefined
   const where: Prisma.OrderWhereInput = { storeId: me.storeId, branchId: me.branchId, ...(status ? { status } : {}), ...(search ? { OR: [{ number: { contains: search, mode: 'insensitive' } }, { customerName: { contains: search, mode: 'insensitive' } }] } : {}) }
-  const [items, total] = await db.$transaction([db.order.findMany({ where, include: { items: { include: { product: { select: { name: true, sku: true } } } } }, orderBy: { createdAt: 'desc' }, skip: (page - 1) * limit, take: limit }), db.order.count({ where })])
+  const [items, total] = await db.$transaction([db.order.findMany({ where, include: { items: { include: { product: { select: { name: true, sku: true } } } }, returns: { include: { items: true }, orderBy: { createdAt: 'desc' } } }, orderBy: { createdAt: 'desc' }, skip: (page - 1) * limit, take: limit }), db.order.count({ where })])
   res.json({ items, total, page, limit })
 })
 app.post('/api/orders', async (req, res) => {
@@ -337,7 +429,7 @@ app.post('/api/orders/:id/refund', requireRole('OWNER', 'MANAGER'), async (req, 
     if (transition === 'invalid') throw new ApiError(409, 'Hanya pesanan dibayar yang belum selesai yang dapat direfund.')
     const changed = await tx.order.updateMany({
       where: { id, storeId: me.storeId, branchId: me.branchId, status: 'CONFIRMED', paymentStatus: 'PAID' },
-      data: { status: 'CANCELLED', paymentStatus: 'REFUNDED', refundedAt: new Date() }
+      data: { status: 'CANCELLED', paymentStatus: 'REFUNDED', refundedAt: new Date(), refundedTotal: current.total }
     })
     if (changed.count !== 1) throw new ApiError(409, 'Pesanan sudah berubah. Muat ulang halaman.')
     for (const item of [...current.items].sort((a, b) => a.productId.localeCompare(b.productId))) {
@@ -353,6 +445,48 @@ app.post('/api/orders/:id/refund', requireRole('OWNER', 'MANAGER'), async (req, 
   res.json(order)
 })
 
+app.post('/api/orders/:id/returns', requireRole('OWNER', 'MANAGER'), async (req, res) => {
+  const me = identity(req)
+  const id = String(req.params.id)
+  const body = parse(z.object({
+    reason: z.string().trim().min(3).max(200),
+    items: z.array(z.object({ productId: z.string().min(1), quantity: int.min(1).max(100_000) })).min(1).max(50)
+  }), req.body)
+  if (new Set(body.items.map(item => item.productId)).size !== body.items.length) throw new ApiError(400, 'Produk retur tidak boleh berulang.')
+  const result = await db.$transaction(async tx => {
+    const order = await tx.order.findFirst({ where: { id, storeId: me.storeId, branchId: me.branchId }, include: { items: true, returns: { include: { items: true } } } })
+    if (!order) throw new ApiError(404, 'Pesanan tidak ditemukan.')
+    if (order.status !== 'FULFILLED' || !['PAID', 'PARTIALLY_REFUNDED'].includes(order.paymentStatus)) throw new ApiError(409, 'Retur hanya tersedia untuk pesanan selesai yang masih memiliki nilai dibayar.')
+    const orderedByProduct = new Map(order.items.map(item => [item.productId, item]))
+    const returnedByProduct = new Map<string, number>()
+    for (const previous of order.returns) for (const item of previous.items) returnedByProduct.set(item.productId, (returnedByProduct.get(item.productId) || 0) + item.quantity)
+    const rows = body.items.map(item => {
+      const ordered = orderedByProduct.get(item.productId)
+      if (!ordered) throw new ApiError(400, 'Produk retur tidak ada dalam pesanan.')
+      const available = ordered.quantity - (returnedByProduct.get(item.productId) || 0)
+      if (item.quantity > available) throw new ApiError(409, `Jumlah retur melebihi sisa untuk salah satu produk.`)
+      return { productId: item.productId, quantity: item.quantity, unitPrice: ordered.unitPrice }
+    })
+    const total = rows.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0)
+    const refundedTotal = order.refundedTotal + total
+    if (refundedTotal > order.total) throw new ApiError(409, 'Nilai retur melebihi total pesanan.')
+    const salesReturn = await tx.salesReturn.create({ data: {
+      storeId: me.storeId, branchId: me.branchId, orderId: order.id, userId: me.id,
+      number: `RTR-${Date.now().toString(36).toUpperCase()}-${randomBytes(3).toString('hex').toUpperCase()}`,
+      total, reason: body.reason, items: { create: rows }
+    }, include: { items: true } })
+    for (const item of rows.sort((a, b) => a.productId.localeCompare(b.productId))) {
+      const inventory = await tx.branchInventory.upsert({ where: { branchId_productId: { branchId: me.branchId, productId: item.productId } }, create: { storeId: me.storeId, branchId: me.branchId, productId: item.productId, stock: item.quantity }, update: { stock: { increment: item.quantity } } })
+      await tx.stockMovement.create({ data: { storeId: me.storeId, branchId: me.branchId, productId: item.productId, orderId: order.id, salesReturnId: salesReturn.id, userId: me.id, type: 'RETURN', quantity: item.quantity, balanceAfter: inventory.stock, reason: `Retur ${salesReturn.number}: ${body.reason}` } })
+    }
+    const fullyRefunded = refundedTotal === order.total
+    await tx.order.update({ where: { id: order.id }, data: { refundedTotal, paymentStatus: fullyRefunded ? 'REFUNDED' : 'PARTIALLY_REFUNDED', refundedAt: new Date() } })
+    await audit(tx, me, 'RETURN', 'ORDER', order.id)
+    return tx.salesReturn.findUniqueOrThrow({ where: { id: salesReturn.id }, include: { items: { include: { product: { select: { name: true, sku: true } } } } } })
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
+  res.status(201).json(result)
+})
+
 app.get('/api/reports/summary', requireRole('OWNER', 'MANAGER'), async (req, res) => {
   const me = identity(req)
   const branchId = me.branchId
@@ -361,48 +495,61 @@ app.get('/api/reports/summary', requireRole('OWNER', 'MANAGER'), async (req, res
     db.$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*)::bigint AS count FROM "Product" p LEFT JOIN "BranchInventory" i ON i."productId" = p.id AND i."branchId" = ${branchId} WHERE p."storeId" = ${me.storeId} AND p.active = true AND COALESCE(i.stock, 0) <= p."minStock"`,
     db.order.count({ where: { storeId: me.storeId, branchId } }),
     db.order.count({ where: { storeId: me.storeId, branchId, status: { in: ['CONFIRMED', 'FULFILLED'] } } }),
-    db.order.count({ where: { storeId: me.storeId, branchId, paymentStatus: 'PAID' } }),
+    db.order.count({ where: { storeId: me.storeId, branchId, paymentStatus: { in: ['PAID', 'PARTIALLY_REFUNDED'] } } }),
     db.order.count({ where: { storeId: me.storeId, branchId, status: 'CONFIRMED', paymentStatus: 'UNPAID' } }),
-    db.order.aggregate({ where: { storeId: me.storeId, branchId, paymentStatus: 'PAID' }, _sum: { total: true } }),
+    db.order.aggregate({ where: { storeId: me.storeId, branchId, paymentStatus: { in: ['PAID', 'PARTIALLY_REFUNDED'] } }, _sum: { total: true, refundedTotal: true } }),
     db.auditLog.findMany({ where: { storeId: me.storeId, branchId }, include: { user: { select: { name: true } } }, orderBy: { createdAt: 'desc' }, take: 8 })
   ])
-  res.json({ products, lowStock: Number(lowStock[0].count), orders, confirmed, paid, unpaid, revenue: revenue._sum.total || 0, recent })
+  res.json({ products, lowStock: Number(lowStock[0].count), orders, confirmed, paid, unpaid, revenue: (revenue._sum.total || 0) - (revenue._sum.refundedTotal || 0), recent })
 })
 app.get('/api/dashboard', async (req, res) => {
   const me = identity(req)
   const storeId = me.storeId
   const branchId = me.branchId
-  const lowStockProducts = () => db.$queryRaw<Array<{ id: string; name: string; sku: string; stock: number; minStock: number }>>`
-    SELECT p.id, p.name, p.sku, COALESCE(i.stock, 0)::integer AS stock, p."minStock" FROM "Product" p
+  const lowStockProducts = () => db.$queryRaw<Array<{ id: string; name: string; sku: string; stock: number; minStock: number; totalLowStock: number }>>`
+    SELECT p.id, p.name, p.sku, COALESCE(i.stock, 0)::integer AS stock, p."minStock", COUNT(*) OVER()::integer AS "totalLowStock" FROM "Product" p
     LEFT JOIN "BranchInventory" i ON i."productId" = p.id AND i."branchId" = ${branchId}
     WHERE p."storeId" = ${storeId} AND p.active = true AND COALESCE(i.stock, 0) <= p."minStock"
     ORDER BY stock ASC, p.name ASC LIMIT 5
   `
-  const lowStockCount = async () => Number((await db.$queryRaw<Array<{ count: bigint }>>`
-    SELECT COUNT(*)::bigint AS count FROM "Product" p
-    LEFT JOIN "BranchInventory" i ON i."productId" = p.id AND i."branchId" = ${branchId}
-    WHERE p."storeId" = ${storeId} AND p.active = true AND COALESCE(i.stock, 0) <= p."minStock"
-  `)[0].count)
   if (me.role === 'OWNER') {
-    const [products, orders, confirmed, revenue, activeUsers, recent, branches, branchAlerts] = await Promise.all([
+    const [products, activeUsers, recent, branches] = await Promise.all([
       db.product.count({ where: { storeId, active: true } }),
-      db.order.count({ where: { storeId } }),
-      db.order.count({ where: { storeId, status: { in: ['CONFIRMED', 'FULFILLED'] } } }),
-      db.order.aggregate({ where: { storeId, paymentStatus: 'PAID' }, _sum: { total: true } }),
       db.user.count({ where: { storeId, active: true } }),
       db.auditLog.findMany({ where: { storeId }, include: { user: { select: { name: true } }, branch: { select: { name: true } } }, orderBy: { createdAt: 'desc' }, take: 6 }),
-      db.branch.findMany({ where: { storeId }, include: { orders: { where: { paymentStatus: 'PAID' }, select: { total: true } } }, orderBy: { createdAt: 'asc' } }),
-      db.$queryRaw<Array<{ branchId: string; count: bigint }>>`SELECT b.id AS "branchId", COUNT(p.id)::bigint AS count FROM "Branch" b CROSS JOIN "Product" p LEFT JOIN "BranchInventory" i ON i."branchId" = b.id AND i."productId" = p.id WHERE b."storeId" = ${storeId} AND p."storeId" = ${storeId} AND p.active = true AND COALESCE(i.stock, 0) <= p."minStock" GROUP BY b.id`
+      db.$queryRaw<Array<{ id: string; name: string; code: string; active: boolean; orders: bigint; confirmed: bigint; revenue: bigint; lowStock: bigint }>>`
+        SELECT b.id, b.name, b.code, b.active,
+          COALESCE(o.orders, 0)::bigint AS orders,
+          COALESCE(o.confirmed, 0)::bigint AS confirmed,
+          COALESCE(o.revenue, 0)::bigint AS revenue,
+          COALESCE(s."lowStock", 0)::bigint AS "lowStock"
+        FROM "Branch" b
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*) AS orders,
+            COUNT(*) FILTER (WHERE status IN ('CONFIRMED', 'FULFILLED')) AS confirmed,
+            COALESCE(SUM(total - "refundedTotal") FILTER (WHERE "paymentStatus" IN ('PAID', 'PARTIALLY_REFUNDED')), 0) AS revenue
+          FROM "Order" WHERE "branchId" = b.id
+        ) o ON true
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*) AS "lowStock" FROM "Product" p
+          LEFT JOIN "BranchInventory" i ON i."productId" = p.id AND i."branchId" = b.id
+          WHERE p."storeId" = ${storeId} AND p.active = true AND COALESCE(i.stock, 0) <= p."minStock"
+        ) s ON true
+        WHERE b."storeId" = ${storeId}
+        ORDER BY b."createdAt" ASC
+      `
     ])
-    return res.json({ role: me.role, products, lowStock: branchAlerts.reduce((sum, row) => sum + Number(row.count), 0), orders, confirmed, revenue: revenue._sum.total || 0, activeUsers, recent,
+    return res.json({ role: me.role, products, lowStock: branches.reduce((sum, row) => sum + Number(row.lowStock), 0), orders: branches.reduce((sum, row) => sum + Number(row.orders), 0), confirmed: branches.reduce((sum, row) => sum + Number(row.confirmed), 0), revenue: branches.reduce((sum, row) => sum + Number(row.revenue), 0), activeUsers, recent,
       branchCount: branches.filter(branch => branch.active).length,
-      branches: branches.map(branch => ({ id: branch.id, name: branch.name, code: branch.code, active: branch.active, revenue: branch.orders.reduce((sum, order) => sum + order.total, 0), lowStock: Number(branchAlerts.find(row => row.branchId === branch.id)?.count ?? 0) })) })
+      branches: branches.map(branch => ({ id: branch.id, name: branch.name, code: branch.code, active: branch.active, revenue: Number(branch.revenue), lowStock: Number(branch.lowStock) })) })
   }
-  const [lowStock, products, draftOrders, confirmedOrders] = await Promise.all([
-    lowStockCount(), lowStockProducts(),
-    db.order.count({ where: { storeId, branchId, status: 'DRAFT' } }),
-    db.order.count({ where: { storeId, branchId, status: 'CONFIRMED' } })
+  const [products, orderCounts] = await Promise.all([
+    lowStockProducts(),
+    db.order.groupBy({ by: ['status'], where: { storeId, branchId, status: { in: ['DRAFT', 'CONFIRMED'] } }, _count: { _all: true } })
   ])
+  const lowStock = products[0]?.totalLowStock ?? 0
+  const draftOrders = orderCounts.find(row => row.status === 'DRAFT')?._count._all ?? 0
+  const confirmedOrders = orderCounts.find(row => row.status === 'CONFIRMED')?._count._all ?? 0
   if (me.role === 'MANAGER') {
     const recent = await db.auditLog.findMany({ where: { storeId, branchId }, include: { user: { select: { name: true } } }, orderBy: { createdAt: 'desc' }, take: 6 })
     return res.json({ role: me.role, lowStock, lowStockProducts: products, draftOrders, confirmedOrders, recent })

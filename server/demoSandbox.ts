@@ -14,6 +14,7 @@ export async function cleanupExpiredDemos(db: PrismaClient, now = new Date()) {
     await tx.session.deleteMany({ where: { user: { storeId: { in: ids } } } })
     await tx.stockMovement.deleteMany({ where: { storeId: { in: ids } } })
     await tx.auditLog.deleteMany({ where: { storeId: { in: ids } } })
+    await tx.stockTransfer.deleteMany({ where: { storeId: { in: ids } } })
     await tx.order.deleteMany({ where: { storeId: { in: ids } } })
     await tx.branchInventory.deleteMany({ where: { storeId: { in: ids } } })
     await tx.product.deleteMany({ where: { storeId: { in: ids } } })
@@ -147,6 +148,19 @@ export async function createDemoSandbox(db: PrismaClient, role: Role, now = new 
     await createOrder(barat, 'Maya', [{ sku: 'MUG-003', qty: 2 }], 'CONFIRMED', staffBar);
     await createOrder(barat, 'Agus', [{ sku: 'SNACK-011', qty: 3 }, { sku: 'TEH-002', qty: 1 }], 'DRAFT', staffBar);
     await createOrder(barat, 'Dina', [{ sku: 'GELAS-008', qty: 2 }], 'FULFILLED', mgrBar);
+
+    const transferProduct = store.products.find(product => product.sku === 'KEMASAN-012')!
+    const demoTransfer = await tx.stockTransfer.create({ data: {
+      storeId: id, number: 'TRF-DEMO-001', fromBranchId: pusat.id, toBranchId: selatan.id, createdById: owner.id,
+      status: 'IN_TRANSIT', sentAt: now, note: 'Pengisian stok untuk akhir pekan',
+      items: { create: [{ productId: transferProduct.id, quantity: 20 }] }
+    } })
+    const transferKey = inventoryKey(pusat.id, transferProduct.id)
+    const transferBalance = (balances.get(transferKey) ?? 0) - 20
+    balances.set(transferKey, transferBalance)
+    changedInventories.set(transferKey, { branchId: pusat.id, productId: transferProduct.id, stock: transferBalance })
+    saleMovements.push({ storeId: id, branchId: pusat.id, productId: transferProduct.id, transferId: demoTransfer.id, userId: owner.id, type: 'TRANSFER_OUT', quantity: -20, balanceAfter: transferBalance, reason: 'Pengiriman transfer TRF-DEMO-001' })
+    orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'SEND', entity: 'TRANSFER', entityId: demoTransfer.id })
 
     for (const inventory of changedInventories.values()) {
       await tx.branchInventory.update({ where: { branchId_productId: { branchId: inventory.branchId, productId: inventory.productId } }, data: { stock: inventory.stock } })

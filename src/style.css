@@ -42,3 +42,29 @@
 .button.danger { background: #fff0ee; color: #a84637; }
 .button.danger:hover { background: #ffe3df; }
 .payment-panel .panel-heading p { margin: .35rem 0 0; color: #748698; font-size: .82rem; }
+.badge.payment-partially_refunded { background: #fff1dc; color: #94621a; }
+.transfer-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; padding: 1.25rem; }
+.transfer-card { border: 1px solid #e2eaf0; border-radius: 12px; padding: 1.15rem; background: #fff; }
+.transfer-route { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 1rem; padding-bottom: 1rem; border-bottom: 1px solid #edf1f5; color: #1786a9; }
+.transfer-route div:last-child { text-align: right; }
+.transfer-route span { display: block; color: #8a9aaa; font-size: .62rem; font-weight: 800; letter-spacing: .12em; margin-bottom: .25rem; }
+.transfer-route strong { color: #20374c; font-size: .9rem; }
+.transfer-summary { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: 1rem; }
+.transfer-summary strong { display: block; color: #1b3349; font-size: .88rem; }
+.transfer-summary small { display: block; color: #92a0ae; font-size: .72rem; margin-top: .25rem; }
+.transfer-items { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .85rem; }
+.transfer-items span { background: #f2f6f8; color: #526b7d; border-radius: 6px; padding: .32rem .5rem; font-size: .74rem; }
+.transfer-note { color: #718395; font-size: .78rem; margin: .8rem 0 0; }
+.badge.transfer-draft { background: #eff3f6; color: #65778a; }
+.badge.transfer-in_transit { background: #fff3dc; color: #99671d; }
+.badge.transfer-received { background: #e4f7ef; color: #13845e; }
+.badge.transfer-cancelled { background: #fff0ee; color: #b75847; }
+.return-lines { display: grid; gap: .7rem; padding: 1.4rem 1.4rem 0; }
+.return-lines label { flex-direction: row; align-items: center; justify-content: space-between; border: 1px solid #e5ebf1; border-radius: 10px; padding: .75rem .9rem; }
+.return-lines label > span { display: flex; flex-direction: column; gap: .2rem; }
+.return-lines small { color: #8a9aaa; font-size: .7rem; font-weight: 500; }
+.return-lines input { width: 110px; }
+.return-count { display: block; color: #a06b1b; margin-top: .35rem; }
+.order-detail > strong small { color: #9aa8b5; text-decoration: line-through; font-size: .7rem; margin-bottom: .15rem; }
+@media(max-width:760px) { .transfer-list { grid-template-columns: 1fr; padding: .8rem; } .transfer-route { gap: .5rem; } }
+.stock-table .badge.neutral:empty::after { content: "Transfer"; }

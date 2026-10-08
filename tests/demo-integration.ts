@@ -52,6 +52,8 @@ assert.equal((await request(`/products?search=${suffix}`, staff.cookie)).data.to
 assert.equal((await request('/users', owner.cookie)).data.length, 7)
 assert.equal((await request('/users', staff.cookie)).status, 403)
 assert.equal((await request('/reports/summary', staff.cookie)).status, 403)
+assert.equal((await request('/transfers', staff.cookie)).status, 403)
+assert.equal((await request('/transfers', manager.cookie)).status, 200)
 assert.equal((await request('/auth/active-branch', staff.cookie, 'PATCH', { branchId: owner.data.activeBranch.id })).status, 403)
 assert.equal((await request('/auth/active-branch', owner.cookie, 'PATCH', { branchId: manager.data.activeBranch.id })).status, 404)
 assert.equal((await request('/products', staff.cookie, 'POST', { sku: 'FORBIDDEN', name: 'Dilarang', price: 1, minStock: 0 })).status, 403)

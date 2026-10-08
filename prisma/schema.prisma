@@ -24,7 +24,15 @@ enum OrderStatus {
 enum PaymentStatus {
   UNPAID
   PAID
+  PARTIALLY_REFUNDED
   REFUNDED
+}
+
+enum TransferStatus {
+  DRAFT
+  IN_TRANSIT
+  RECEIVED
+  CANCELLED
 }
 
 enum PaymentMethod {
@@ -39,6 +47,8 @@ enum MovementType {
   ADJUSTMENT
   SALE
   RETURN
+  TRANSFER_OUT
+  TRANSFER_IN
 }
 
 model Store {
@@ -52,6 +62,8 @@ model Store {
   inventories BranchInventory[]
   products Product[]
   orders Order[]
+  transfers StockTransfer[]
+  returns SalesReturn[]
   movements StockMovement[]
   auditLogs AuditLog[]
   @@index([isDemo, demoExpiresAt])
@@ -70,6 +82,9 @@ model Branch {
   sessions Session[]
   inventories BranchInventory[]
   orders Order[]
+  outgoingTransfers StockTransfer[] @relation("TransferFrom")
+  incomingTransfers StockTransfer[] @relation("TransferTo")
+  returns SalesReturn[]
   movements StockMovement[]
   auditLogs AuditLog[]
   @@unique([storeId, code])
@@ -104,6 +119,9 @@ model User {
   sessions Session[]
   movements StockMovement[]
   auditLogs AuditLog[]
+  createdTransfers StockTransfer[] @relation("TransferCreatedBy")
+  receivedTransfers StockTransfer[] @relation("TransferReceivedBy")
+  returns SalesReturn[]
   @@index([storeId])
   @@index([branchId])
 }
@@ -135,6 +153,8 @@ model Product {
   items OrderItem[]
   movements StockMovement[]
   inventories BranchInventory[]
+  transferItems StockTransferItem[]
+  returnItems SalesReturnItem[]
   @@unique([storeId, sku])
   @@index([storeId, name])
 }
@@ -152,11 +172,13 @@ model Order {
   paymentMethod PaymentMethod?
   paidAt DateTime?
   refundedAt DateTime?
+  refundedTotal Int @default(0)
   total Int
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   items OrderItem[]
   movements StockMovement[]
+  returns SalesReturn[]
   @@unique([storeId, number])
   @@index([storeId, status, createdAt])
   @@index([branchId, status, createdAt])
@@ -184,6 +206,10 @@ model StockMovement {
   product Product @relation(fields: [productId], references: [id])
   orderId String?
   order Order? @relation(fields: [orderId], references: [id])
+  transferId String?
+  transfer StockTransfer? @relation(fields: [transferId], references: [id])
+  salesReturnId String?
+  salesReturn SalesReturn? @relation(fields: [salesReturnId], references: [id])
   userId String
   user User @relation(fields: [userId], references: [id])
   type MovementType
@@ -193,6 +219,76 @@ model StockMovement {
   createdAt DateTime @default(now())
   @@index([storeId, createdAt])
   @@index([branchId, createdAt])
+  @@index([transferId])
+  @@index([salesReturnId])
+}
+
+model StockTransfer {
+  id String @id @default(cuid())
+  storeId String
+  store Store @relation(fields: [storeId], references: [id])
+  number String
+  fromBranchId String
+  fromBranch Branch @relation("TransferFrom", fields: [fromBranchId], references: [id])
+  toBranchId String
+  toBranch Branch @relation("TransferTo", fields: [toBranchId], references: [id])
+  createdById String
+  createdBy User @relation("TransferCreatedBy", fields: [createdById], references: [id])
+  receivedById String?
+  receivedBy User? @relation("TransferReceivedBy", fields: [receivedById], references: [id])
+  status TransferStatus @default(DRAFT)
+  note String?
+  createdAt DateTime @default(now())
+  sentAt DateTime?
+  receivedAt DateTime?
+  items StockTransferItem[]
+  movements StockMovement[]
+  @@unique([storeId, number])
+  @@index([storeId, createdAt])
+  @@index([fromBranchId, status, createdAt])
+  @@index([toBranchId, status, createdAt])
+}
+
+model StockTransferItem {
+  id String @id @default(cuid())
+  transferId String
+  transfer StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  productId String
+  product Product @relation(fields: [productId], references: [id])
+  quantity Int
+  @@unique([transferId, productId])
+}
+
+model SalesReturn {
+  id String @id @default(cuid())
+  storeId String
+  store Store @relation(fields: [storeId], references: [id])
+  branchId String
+  branch Branch @relation(fields: [branchId], references: [id])
+  orderId String
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  userId String
+  user User @relation(fields: [userId], references: [id])
+  number String
+  total Int
+  reason String
+  createdAt DateTime @default(now())
+  items SalesReturnItem[]
+  movements StockMovement[]
+  @@unique([storeId, number])
+  @@index([orderId, createdAt])
+  @@index([branchId, createdAt])
+}
+
+model SalesReturnItem {
+  id String @id @default(cuid())
+  salesReturnId String
+  salesReturn SalesReturn @relation(fields: [salesReturnId], references: [id], onDelete: Cascade)
+  productId String
+  product Product @relation(fields: [productId], references: [id])
+  quantity Int
+  unitPrice Int
+  @@unique([salesReturnId, productId])
 }
 
 model AuditLog {
