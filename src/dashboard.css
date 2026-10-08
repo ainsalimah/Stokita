@@ -27,3 +27,24 @@
 .branch-picker small { color: #ffd6c8; }
 .network-panel { margin-bottom: 24px; }
 .report-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+/* Keep the sidebar background and its contents inside the visible viewport. */
+.sidebar {
+  min-height: 100dvh;
+  height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+@media (max-height: 900px) and (min-width: 781px) {
+  .sidebar { padding-top: 1rem; padding-bottom: 1rem; }
+  .workspace { margin-top: 1rem; margin-bottom: 1rem; }
+  .branch-picker { margin-bottom: 1rem; padding-block: .7rem; }
+  .nav-label { margin-bottom: .45rem; }
+  .sidebar nav { gap: .1rem; }
+  .nav-item { padding-block: .58rem; }
+  .sidebar-bottom { padding-top: .6rem; }
+  .profile { padding-bottom: .55rem; }
+}
