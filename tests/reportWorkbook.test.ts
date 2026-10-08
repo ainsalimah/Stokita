@@ -30,4 +30,17 @@ describe('unduhan laporan Excel', () => {
     const sheet = buildOrderWorkbook('Toko Kosong', []).getWorksheet('Pesanan')!
     assert.equal(sheet.getCell('A7').value, 'Belum ada pesanan untuk toko ini.')
   })
+
+  it('menambahkan cabang pada laporan jaringan', async () => {
+    const workbook = buildOrderWorkbook('Jaringan Uji', [
+      { number: 'ORD-003', customerName: 'Pelanggan C', status: 'FULFILLED', total: 50000, createdAt: new Date('2026-10-08T10:00:00.000Z'), branchName: 'Jakarta Selatan' }
+    ])
+    const file = await workbook.xlsx.writeBuffer()
+    const reopened = new ExcelJS.Workbook()
+    await reopened.xlsx.load(file as Buffer)
+    const sheet = reopened.getWorksheet('Seluruh Cabang')!
+    assert.equal(sheet.getCell('A1').value, 'Cabang')
+    assert.equal(sheet.getCell('A2').value, 'Jakarta Selatan')
+    assert.equal(sheet.getCell('E2').value, 50000)
+  })
 })

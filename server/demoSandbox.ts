@@ -15,8 +15,10 @@ export async function cleanupExpiredDemos(db: PrismaClient, now = new Date()) {
     await tx.stockMovement.deleteMany({ where: { storeId: { in: ids } } })
     await tx.auditLog.deleteMany({ where: { storeId: { in: ids } } })
     await tx.order.deleteMany({ where: { storeId: { in: ids } } })
+    await tx.branchInventory.deleteMany({ where: { storeId: { in: ids } } })
     await tx.product.deleteMany({ where: { storeId: { in: ids } } })
     await tx.user.deleteMany({ where: { storeId: { in: ids } } })
+    await tx.branch.deleteMany({ where: { storeId: { in: ids } } })
     await tx.store.deleteMany({ where: { id: { in: ids }, isDemo: true } })
   })
 }
@@ -42,40 +44,45 @@ export async function createDemoSandbox(db: PrismaClient, role: Role, now = new 
     const store = await tx.store.create({
       data: {
         id, name: 'Toko Demo', isDemo: true, demoExpiresAt: new Date(now.getTime() + demoAge),
-        users: { create: [
-          { name: 'Alya Pratama', email: `owner+${id}@demo.stokita.local`, passwordHash, role: 'OWNER' },
-          { name: 'Bima Saputra', email: `manager+${id}@demo.stokita.local`, passwordHash, role: 'MANAGER' },
-          { name: 'Citra Dewi', email: `staff+${id}@demo.stokita.local`, passwordHash, role: 'STAFF' }
+        branches: { create: [
+          { code: 'PUSAT', name: 'Jakarta Pusat' },
+          { code: 'SELATAN', name: 'Jakarta Selatan' },
+          { code: 'BARAT', name: 'Jakarta Barat' }
         ] },
-        products: { create: catalog }
+        products: { create: catalog.map(({ stock, ...product }) => product) }
       },
-      include: { users: true, products: true }
+      include: { branches: true, products: true }
     })
-    const owner = store.users.find(user => user.role === 'OWNER')!
-    const user = store.users.find(user => user.role === role)!
+    const [pusat, selatan, barat] = ['PUSAT', 'SELATAN', 'BARAT'].map(code => store.branches.find(branch => branch.code === code)!)
+    const owner = await tx.user.create({ data: { storeId: id, name: 'Alya Pratama', email: `owner+${id}@demo.stokita.local`, passwordHash, role: 'OWNER' } })
+    const manager = await tx.user.create({ data: { storeId: id, branchId: selatan.id, name: 'Bima Saputra', email: `manager+${id}@demo.stokita.local`, passwordHash, role: 'MANAGER' } })
+    const staff = await tx.user.create({ data: { storeId: id, branchId: barat.id, name: 'Citra Dewi', email: `staff+${id}@demo.stokita.local`, passwordHash, role: 'STAFF' } })
+    const user = role === 'OWNER' ? owner : role === 'MANAGER' ? manager : staff
     const coffee = store.products.find(product => product.sku === 'KOPI-001')!
     const tea = store.products.find(product => product.sku === 'TEH-002')!
-    await tx.stockMovement.createMany({ data: store.products.map(product => ({
-      storeId: id, productId: product.id, userId: owner.id, type: 'IN',
-      quantity: product.sku === 'TEH-002' ? 13 : product.stock,
-      balanceAfter: product.sku === 'TEH-002' ? 13 : product.stock,
-      reason: 'Stok awal demo'
-    })) })
+    for (const branch of [pusat, selatan, barat]) {
+      const factor = branch.id === pusat.id ? 1 : branch.id === selatan.id ? 0.6 : 0.35
+      for (const product of store.products) {
+        const stock = Math.max(1, Math.round(catalog.find(item => item.sku === product.sku)!.stock * factor))
+        await tx.branchInventory.create({ data: { storeId: id, branchId: branch.id, productId: product.id, stock: product.sku === 'TEH-002' && branch.id === pusat.id ? stock - 1 : stock } })
+        await tx.stockMovement.create({ data: { storeId: id, branchId: branch.id, productId: product.id, userId: owner.id, type: 'IN', quantity: stock, balanceAfter: stock, reason: 'Stok awal demo' } })
+      }
+    }
     const draft = await tx.order.create({ data: {
-      storeId: id, number: 'ORD-DEMO-001', customerName: 'Nadia Putri', total: coffee.price * 2,
+      storeId: id, branchId: pusat.id, number: 'ORD-DEMO-001', customerName: 'Nadia Putri', total: coffee.price * 2,
       items: { create: { productId: coffee.id, quantity: 2, unitPrice: coffee.price } }
     } })
     const confirmed = await tx.order.create({ data: {
-      storeId: id, number: 'ORD-DEMO-002', customerName: 'Raka Santoso', status: 'CONFIRMED', total: tea.price,
+      storeId: id, branchId: pusat.id, number: 'ORD-DEMO-002', customerName: 'Raka Santoso', status: 'CONFIRMED', total: tea.price,
       items: { create: { productId: tea.id, quantity: 1, unitPrice: tea.price } }
     } })
     await tx.stockMovement.create({ data: {
-      storeId: id, productId: tea.id, orderId: confirmed.id, userId: owner.id,
-      type: 'SALE', quantity: -1, balanceAfter: tea.stock, reason: 'Konfirmasi pesanan ORD-DEMO-002'
+      storeId: id, branchId: pusat.id, productId: tea.id, orderId: confirmed.id, userId: owner.id,
+      type: 'SALE', quantity: -1, balanceAfter: catalog.find(item => item.sku === 'TEH-002')!.stock - 1, reason: 'Konfirmasi pesanan ORD-DEMO-002'
     } })
     await tx.auditLog.createMany({ data: [
-      { storeId: id, userId: owner.id, action: 'CREATE', entity: 'ORDER', entityId: draft.id },
-      { storeId: id, userId: owner.id, action: 'CONFIRM', entity: 'ORDER', entityId: confirmed.id }
+      { storeId: id, branchId: pusat.id, userId: owner.id, action: 'CREATE', entity: 'ORDER', entityId: draft.id },
+      { storeId: id, branchId: pusat.id, userId: owner.id, action: 'CONFIRM', entity: 'ORDER', entityId: confirmed.id }
     ] })
     return { user, store }
   }, { timeout: 20_000 })

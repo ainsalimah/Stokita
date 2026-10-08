@@ -6,6 +6,7 @@ type ReportOrder = {
   status: 'DRAFT' | 'CONFIRMED' | 'FULFILLED' | 'CANCELLED'
   total: number
   createdAt: Date
+  branchName?: string
 }
 
 const ink = 'FF17334A'
@@ -115,5 +116,24 @@ export function buildOrderWorkbook(storeName: string, orders: ReportOrder[]) {
   sheet.pageSetup.printTitlesRow = '1:6'
   sheet.pageSetup.margins = { left: 0.3, right: 0.3, top: 0.45, bottom: 0.45, header: 0.2, footer: 0.2 }
   sheet.headerFooter.oddFooter = 'Stokita • &P / &N'
+  if (orders.some(order => order.branchName)) {
+    const network = workbook.addWorksheet('Seluruh Cabang', { views: [{ state: 'frozen', ySplit: 1 }] })
+    network.columns = [
+      { header: 'Cabang', key: 'branch', width: 25 },
+      { header: 'Nomor Pesanan', key: 'number', width: 23 },
+      { header: 'Pelanggan', key: 'customer', width: 25 },
+      { header: 'Status', key: 'status', width: 20 },
+      { header: 'Total', key: 'total', width: 20 },
+      { header: 'Tanggal', key: 'date', width: 24 }
+    ]
+    network.getRow(1).font = { bold: true, color: { argb: white } }
+    network.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: blue } }
+    for (const order of orders) {
+      const row = network.addRow({ branch: order.branchName, number: order.number, customer: order.customerName, status: statusLabels[order.status], total: order.total, date: order.createdAt })
+      row.getCell(5).numFmt = '"Rp" #,##0'
+      row.getCell(6).numFmt = 'dd mmm yyyy, hh:mm'
+    }
+    network.autoFilter = { from: 'A1', to: `F${Math.max(2, orders.length + 1)}` }
+  }
   return workbook
 }

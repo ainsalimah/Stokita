@@ -12,3 +12,18 @@
 @media(max-width:780px){.dashboard-panels{grid-template-columns:1fr}}
 @media(max-width:560px){.dashboard-stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:.7rem}.dashboard-actions .button{flex:1 1 auto;white-space:normal}.dashboard-list{padding:.2rem 1rem}.dashboard-row{align-items:flex-start}}
 @media(max-width:360px){.dashboard-stats{grid-template-columns:1fr}}
+.branch-picker {
+  margin: 0 16px 18px;
+  padding: 13px 14px;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .07);
+  display: grid;
+  gap: 7px;
+}
+.branch-picker label { color: #a8c4d2; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+.branch-picker select { width: 100%; border: 1px solid #c9dce5; border-radius: 8px; padding: 9px; background: #fff; color: #17334a; font: inherit; }
+.branch-picker strong { color: #fff; font-size: 14px; }
+.branch-picker small { color: #ffd6c8; }
+.network-panel { margin-bottom: 24px; }
+.report-actions { display: flex; gap: 10px; flex-wrap: wrap; }

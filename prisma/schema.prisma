@@ -35,11 +35,45 @@ model Store {
   isDemo Boolean @default(false)
   demoExpiresAt DateTime?
   users User[]
+  branches Branch[]
+  inventories BranchInventory[]
   products Product[]
   orders Order[]
   movements StockMovement[]
   auditLogs AuditLog[]
   @@index([isDemo, demoExpiresAt])
+}
+
+model Branch {
+  id String @id @default(cuid())
+  storeId String
+  store Store @relation(fields: [storeId], references: [id])
+  code String
+  name String
+  address String?
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  users User[]
+  sessions Session[]
+  inventories BranchInventory[]
+  orders Order[]
+  movements StockMovement[]
+  auditLogs AuditLog[]
+  @@unique([storeId, code])
+  @@index([storeId, active])
+}
+
+model BranchInventory {
+  id String @id @default(cuid())
+  storeId String
+  store Store @relation(fields: [storeId], references: [id])
+  branchId String
+  branch Branch @relation(fields: [branchId], references: [id])
+  productId String
+  product Product @relation(fields: [productId], references: [id])
+  stock Int @default(0)
+  @@unique([branchId, productId])
+  @@index([storeId, branchId])
 }
 
 model User {
@@ -50,12 +84,15 @@ model User {
   email String @unique
   passwordHash String
   role Role
+  branchId String?
+  branch Branch? @relation(fields: [branchId], references: [id])
   active Boolean @default(true)
   createdAt DateTime @default(now())
   sessions Session[]
   movements StockMovement[]
   auditLogs AuditLog[]
   @@index([storeId])
+  @@index([branchId])
 }
 
 model Session {
@@ -63,6 +100,8 @@ model Session {
   userId String
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   tokenHash String @unique
+  activeBranchId String?
+  activeBranch Branch? @relation(fields: [activeBranchId], references: [id])
   expiresAt DateTime
   createdAt DateTime @default(now())
   @@index([userId])
@@ -76,13 +115,13 @@ model Product {
   name String
   category String?
   price Int
-  stock Int @default(0)
   minStock Int @default(5)
   active Boolean @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   items OrderItem[]
   movements StockMovement[]
+  inventories BranchInventory[]
   @@unique([storeId, sku])
   @@index([storeId, name])
 }
@@ -91,6 +130,8 @@ model Order {
   id String @id @default(cuid())
   storeId String
   store Store @relation(fields: [storeId], references: [id])
+  branchId String
+  branch Branch @relation(fields: [branchId], references: [id])
   number String
   customerName String
   status OrderStatus @default(DRAFT)
@@ -101,6 +142,7 @@ model Order {
   movements StockMovement[]
   @@unique([storeId, number])
   @@index([storeId, status, createdAt])
+  @@index([branchId, status, createdAt])
 }
 
 model OrderItem {
@@ -118,6 +160,8 @@ model StockMovement {
   id String @id @default(cuid())
   storeId String
   store Store @relation(fields: [storeId], references: [id])
+  branchId String
+  branch Branch @relation(fields: [branchId], references: [id])
   productId String
   product Product @relation(fields: [productId], references: [id])
   orderId String?
@@ -130,12 +174,15 @@ model StockMovement {
   reason String
   createdAt DateTime @default(now())
   @@index([storeId, createdAt])
+  @@index([branchId, createdAt])
 }
 
 model AuditLog {
   id String @id @default(cuid())
   storeId String
   store Store @relation(fields: [storeId], references: [id])
+  branchId String?
+  branch Branch? @relation(fields: [branchId], references: [id])
   userId String
   user User @relation(fields: [userId], references: [id])
   action String
@@ -143,4 +190,5 @@ model AuditLog {
   entityId String
   createdAt DateTime @default(now())
   @@index([storeId, createdAt])
+  @@index([branchId, createdAt])
 }

@@ -37,6 +37,10 @@ for (const account of [owner, manager, staff]) {
   assert.equal(dashboard.status, 200)
   assert.equal(dashboard.data.role, account.data.user.role)
   assert.equal(products.data.total, 4)
+  const branches = await request('/branches', account.cookie)
+  assert.equal(branches.status, 200)
+  assert.equal(branches.data.length, account.data.user.role === 'OWNER' ? 3 : 1)
+  assert.ok(me.data.activeBranch.id)
 }
 
 const suffix = randomBytes(3).toString('hex').toUpperCase()
@@ -47,6 +51,8 @@ assert.equal((await request(`/products?search=${suffix}`, manager.cookie)).data.
 assert.equal((await request(`/products?search=${suffix}`, staff.cookie)).data.total, 0)
 assert.equal((await request('/users', owner.cookie)).data.length, 3)
 assert.equal((await request('/users', staff.cookie)).status, 403)
+assert.equal((await request('/auth/active-branch', staff.cookie, 'PATCH', { branchId: owner.data.activeBranch.id })).status, 403)
+assert.equal((await request('/auth/active-branch', owner.cookie, 'PATCH', { branchId: manager.data.activeBranch.id })).status, 404)
 assert.equal((await request('/products', staff.cookie, 'POST', { sku: 'FORBIDDEN', name: 'Dilarang', price: 1, minStock: 0 })).status, 403)
 
 const invalid = await request('/auth/demo', '', 'POST', { role: 'ADMIN' })
