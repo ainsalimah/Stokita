@@ -329,8 +329,8 @@ app.get('/api/dashboard', async (req, res) => {
     WHERE p."storeId" = ${storeId} AND p.active = true AND COALESCE(i.stock, 0) <= p."minStock"
   `)[0].count)
   if (me.role === 'OWNER') {
-    const [products, lowStock, orders, confirmed, revenue, activeUsers, recent, branches, branchAlerts] = await Promise.all([
-      db.product.count({ where: { storeId, active: true } }), lowStockCount(),
+    const [products, orders, confirmed, revenue, activeUsers, recent, branches, branchAlerts] = await Promise.all([
+      db.product.count({ where: { storeId, active: true } }),
       db.order.count({ where: { storeId } }),
       db.order.count({ where: { storeId, status: { in: ['CONFIRMED', 'FULFILLED'] } } }),
       db.order.aggregate({ where: { storeId, status: { in: ['CONFIRMED', 'FULFILLED'] } }, _sum: { total: true } }),
@@ -339,7 +339,7 @@ app.get('/api/dashboard', async (req, res) => {
       db.branch.findMany({ where: { storeId }, include: { orders: { where: { status: { in: ['CONFIRMED', 'FULFILLED'] } }, select: { total: true } } }, orderBy: { createdAt: 'asc' } }),
       db.$queryRaw<Array<{ branchId: string; count: bigint }>>`SELECT b.id AS "branchId", COUNT(p.id)::bigint AS count FROM "Branch" b CROSS JOIN "Product" p LEFT JOIN "BranchInventory" i ON i."branchId" = b.id AND i."productId" = p.id WHERE b."storeId" = ${storeId} AND p."storeId" = ${storeId} AND p.active = true AND COALESCE(i.stock, 0) <= p."minStock" GROUP BY b.id`
     ])
-    return res.json({ role: me.role, products, lowStock, orders, confirmed, revenue: revenue._sum.total || 0, activeUsers, recent,
+    return res.json({ role: me.role, products, lowStock: branchAlerts.reduce((sum, row) => sum + Number(row.count), 0), orders, confirmed, revenue: revenue._sum.total || 0, activeUsers, recent,
       branchCount: branches.filter(branch => branch.active).length,
       branches: branches.map(branch => ({ id: branch.id, name: branch.name, code: branch.code, active: branch.active, revenue: branch.orders.reduce((sum, order) => sum + order.total, 0), lowStock: Number(branchAlerts.find(row => row.branchId === branch.id)?.count ?? 0) })) })
   }

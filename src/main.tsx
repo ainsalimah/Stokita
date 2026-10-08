@@ -144,7 +144,7 @@ function Dashboard({ role }: { role: Role }) {
     <div className="dashboard-stats">
       <div className="stat-card"><span>Cabang aktif</span><strong>{data.branchCount}</strong><small>Lokasi dalam jaringan</small><Store size={23}/></div>
       <div className="stat-card"><span>Produk aktif</span><strong>{data.products}</strong><small>Dalam katalog</small><Package size={23}/></div>
-      <div className="stat-card warning"><span>Stok menipis</span><strong>{data.lowStock}</strong><small>Perlu perhatian</small><AlertCircle size={23}/></div>
+      <div className="stat-card warning"><span>Stok menipis</span><strong>{data.lowStock}</strong><small>Di seluruh cabang</small><AlertCircle size={23}/></div>
       <div className="stat-card"><span>Total pesanan</span><strong>{data.orders}</strong><small>{data.confirmed} dikonfirmasi / selesai</small><ClipboardList size={23}/></div>
       <div className="stat-card highlight"><span>Nilai pesanan aktif</span><strong className="money-stat">{money(data.revenue)}</strong><small>Dikonfirmasi & selesai</small><BarChart3 size={23}/></div>
       <div className="stat-card"><span>Pengguna aktif</span><strong>{data.activeUsers}</strong><small>Tim toko yang dapat masuk</small><Users size={23}/></div>
