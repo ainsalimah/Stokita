@@ -33,3 +33,12 @@
   .users-table td:nth-child(3)::before { content: 'Status'; }
   .users-table td:nth-child(4)::before { content: 'Aksi'; }
 }
+
+.order-actions { flex-wrap: wrap; }
+.order-badges { display: flex; gap: .45rem; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.badge.payment-unpaid { background: #fff5df; color: #9a6619; }
+.badge.payment-paid { background: #e7f7f0; color: #117554; }
+.badge.payment-refunded { background: #f3eefb; color: #7553a6; }
+.button.danger { background: #fff0ee; color: #a84637; }
+.button.danger:hover { background: #ffe3df; }
+.payment-panel .panel-heading p { margin: .35rem 0 0; color: #748698; font-size: .82rem; }

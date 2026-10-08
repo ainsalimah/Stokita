@@ -1,6 +1,6 @@
 # Stokita
 
-**Satu jaringan toko, katalog bersama, dan stok yang jelas di setiap cabang.** Stokita adalah proyek portofolio full stack untuk mengelola produk, stok, pesanan, tim, dan laporan dari beberapa cabang dalam satu perusahaan.
+**Operasional penjualan untuk jaringan toko dalam satu tempat.** Stokita adalah aplikasi full stack untuk mengelola katalog, stok per cabang, pesanan, pembayaran, tim, dan laporan dari beberapa cabang dalam satu perusahaan.
 
 [Coba aplikasi](https://stokita-two.vercel.app) · [Lihat kode](https://github.com/ainsalimah/Stokita)
 
@@ -12,23 +12,24 @@ Pemilik dapat melihat ringkasan seluruh jaringan, memilih cabang aktif untuk pek
 
 ## Coba demo
 
-Buka [aplikasi Stokita](https://stokita-two.vercel.app), lalu pilih **Pemilik**, **Manajer**, atau **Staf**. Setiap klik membuat perusahaan demo pribadi selama 24 jam dengan tiga cabang, empat produk, stok awal, dan contoh pesanan. Tidak diperlukan email atau kata sandi. Data setiap pengunjung terpisah.
+Buka [aplikasi Stokita](https://stokita-two.vercel.app), lalu pilih **Pemilik**, **Manajer**, atau **Staf**. Setiap klik membuat perusahaan demo pribadi selama 24 jam dengan tiga cabang, 12 produk, stok yang berbeda, serta transaksi dalam beberapa tahap. Tidak diperlukan email atau kata sandi. Data setiap pengunjung terpisah.
 
 | Peran | Yang dapat dilakukan |
 | --- | --- |
-| Pemilik | Melihat seluruh jaringan, berpindah cabang, mengelola cabang, katalog, dan pengguna |
-| Manajer | Melihat stok dan pesanan pada cabangnya, mencatat stok, serta memproses pesanan |
-| Staf | Mencatat stok, membuat pesanan, dan menangani antrean pada cabangnya |
+| Pemilik | Mengendalikan jaringan, cabang, katalog, harga, pengguna, laporan, dan seluruh tindakan operasional |
+| Manajer | Mengawasi satu cabang, melihat laporan, mengoreksi stok, membatalkan pesanan, dan memproses refund |
+| Staf | Menangani pekerjaan harian berupa stok masuk, pesanan, pembayaran, dan penyelesaian transaksi |
 
 Untuk melihat perbedaan stok, masuk sebagai Pemilik, buka **Produk**, lalu ganti **Cabang aktif** pada menu samping. Untuk mencoba pembatasan akses, keluar dan pilih Manajer atau Staf.
 
 ## Fitur utama
 
 - **Inventaris per cabang.** Setiap perubahan menyimpan jenis, jumlah, saldo sesudahnya, alasan, dan pelaku.
-- **Pesanan transaksional.** Konfirmasi mengurangi stok cabang dalam transaksi database. Jika stok tidak cukup, pesanan tidak berubah. Pembatalan mengembalikan stok satu kali.
+- **Alur penjualan utuh.** Pesanan berjalan dari draft, konfirmasi stok, pembayaran, hingga selesai. Tunai, transfer, QRIS, dan kartu didukung.
+- **Refund terkendali.** Manajer atau pemilik dapat merefund transaksi yang sudah dibayar dan stok dikembalikan secara atomik.
 - **Akses sesuai peran.** Cabang dan peran ditentukan dari sesi pengguna di server. Permintaan tidak dapat memilih cabang lain melalui ID yang dikirim browser.
-- **Ringkasan pusat.** Pemilik melihat pesanan, nilai transaksi, tim, dan kondisi setiap cabang.
-- **Excel pusat dan cabang.** Laporan cabang aktif tersedia untuk semua peran. Pemilik dapat mengunduh laporan seluruh jaringan dengan kolom cabang.
+- **Ringkasan pusat.** Pemilik melihat pendapatan yang sudah dibayar, transaksi, tim, dan kondisi setiap cabang.
+- **Excel pusat dan cabang.** Manajer dapat mengunduh laporan cabangnya. Pemilik juga dapat mengunduh laporan seluruh jaringan. Status pembayaran dan metode pembayaran tercantum di dalamnya.
 - **Demo pribadi.** Setiap pengunjung mendapat ruang demo yang terpisah dan dibersihkan setelah masa berlaku.
 
 ## Teknologi
@@ -63,6 +64,8 @@ Pengujian integrasi memeriksa pemisahan stok dan pesanan antar cabang, akses per
 
 Migrasi `20261008090000_multi_branch` membuat **Cabang Utama** untuk setiap perusahaan yang sudah ada. Saldo stok produk lama dipindahkan ke `BranchInventory` pada cabang tersebut. Pesanan, pergerakan stok, audit log, pengguna manajer dan staf, serta sesi lama ditautkan ke cabang yang sama. ID produk, pesanan, pengguna, dan perusahaan tetap dipertahankan.
 
+Migrasi `20261008170000_order_payments` menambahkan status dan metode pembayaran. Pesanan lama yang sudah selesai ditandai sudah dibayar dengan metode tunai agar nilai historis tetap masuk laporan. Pesanan lama yang masih dikonfirmasi tetap menunggu pembayaran.
+
 Sebelum migrasi produksi, buat snapshot database. Jalankan `npm run db:deploy` dengan `DIRECT_URL` produksi, lalu terbitkan aplikasi versi baru. Migrasi harus selesai sebelum API baru menerima permintaan. Jalankan pengujian pada salinan database terlebih dahulu.
 
 ## Aturan data dan akses
@@ -70,7 +73,10 @@ Sebelum migrasi produksi, buat snapshot database. Jalankan `npm run db:deploy` d
 - SKU unik dalam satu perusahaan. Harga pada item pesanan disalin saat draft dibuat sehingga perubahan harga katalog tidak mengubah pesanan lama.
 - Stok tidak boleh negatif. Penambahan, pengurangan, pergerakan stok, dan perubahan status pesanan memakai transaksi dengan isolasi `Serializable`.
 - `OWNER` dapat mengganti cabang aktif pada sesinya. `MANAGER` dan `STAFF` selalu memakai cabang yang ditugaskan. Pemindahan pengguna ke cabang lain mengakhiri sesi lamanya.
-- Pesanan `DRAFT` dapat dikonfirmasi. Pesanan `CONFIRMED` dapat diselesaikan atau dibatalkan. Pesanan `FULFILLED` tidak dapat dibatalkan.
+- Pesanan `DRAFT` dapat dikonfirmasi untuk mereservasi stok. Pesanan `CONFIRMED` harus dibayar sebelum diselesaikan.
+- Pesanan terkonfirmasi yang belum dibayar dapat dibatalkan manajer atau pemilik. Pesanan terkonfirmasi yang sudah dibayar dapat direfund oleh peran yang sama.
+- Pendapatan hanya menghitung pesanan berstatus pembayaran `PAID`. Transaksi `UNPAID` dan `REFUNDED` tidak masuk pendapatan.
+- Staf dapat mencatat stok masuk. Koreksi stok hanya tersedia untuk manajer dan pemilik.
 - Data perusahaan lain tetap terpisah. Setiap akses produk, cabang, stok, dan pesanan diperiksa terhadap perusahaan dari sesi.
 
 ## API
@@ -87,7 +93,8 @@ Semua endpoint memakai awalan `/api`. Selain login, demo, dan health, endpoint m
 | GET, POST, PATCH | `/products`, `/products/:id` | Katalog bersama, perubahan khusus pemilik |
 | GET, POST | `/stock-movements` | Riwayat dan perubahan stok cabang |
 | GET, POST | `/orders` | Daftar dan buat pesanan cabang |
-| POST | `/orders/:id/confirm`, `/orders/:id/cancel`, `/orders/:id/fulfill` | Transisi status pesanan |
+| POST | `/orders/:id/confirm`, `/orders/:id/cancel`, `/orders/:id/fulfill` | Konfirmasi, pembatalan, dan penyelesaian pesanan |
+| POST | `/orders/:id/pay`, `/orders/:id/refund` | Pencatatan pembayaran dan refund |
 | GET | `/dashboard`, `/reports/summary` | Ringkasan sesuai peran |
 | GET | `/reports/orders.xlsx`, `/reports/network.xlsx` | Excel cabang dan seluruh jaringan |
 

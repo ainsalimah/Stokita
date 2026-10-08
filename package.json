@@ -13,7 +13,7 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "node --experimental-strip-types prisma/seed.ts",
-    "test": "node --experimental-strip-types --test tests/orderRules.test.ts tests/reportWorkbook.test.ts",
+    "test": "node --experimental-strip-types --test tests/orderRules.test.ts tests/paymentRules.test.ts tests/reportWorkbook.test.ts",
     "test:integration": "node --experimental-strip-types tests/integration.ts",
     "test:demo:integration": "node --experimental-strip-types tests/demo-integration.ts",
     "typecheck": "tsc --noEmit && tsc -p server/tsconfig.json --noEmit && tsc -p api/tsconfig.json --noEmit"

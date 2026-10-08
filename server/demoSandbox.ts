@@ -93,7 +93,7 @@ export async function createDemoSandbox(db: PrismaClient, role: Role, now = new 
     }
 
     let orderCounter = 1;
-    const createOrder = async (branch: any, customer: string, items: any[], status: 'DRAFT' | 'CONFIRMED' | 'FULFILLED', userObj: any) => {
+    const createOrder = async (branch: any, customer: string, items: any[], status: 'DRAFT' | 'CONFIRMED' | 'FULFILLED', userObj: any, paid = status === 'FULFILLED') => {
       const orderNum = `ORD-DEMO-${String(orderCounter++).padStart(3, '0')}`;
       let total = 0;
       const orderItemsData = items.map(i => {
@@ -105,6 +105,7 @@ export async function createDemoSandbox(db: PrismaClient, role: Role, now = new 
       const order = await tx.order.create({
         data: {
           storeId: id, branchId: branch.id, number: orderNum, customerName: customer, total, status,
+          paymentStatus: paid ? 'PAID' : 'UNPAID', paymentMethod: paid ? 'QRIS' : null, paidAt: paid ? now : null,
           items: { create: orderItemsData }
         }
       });
@@ -127,13 +128,14 @@ export async function createDemoSandbox(db: PrismaClient, role: Role, now = new 
       if (status !== 'DRAFT') {
          await tx.auditLog.create({ data: { storeId: id, branchId: branch.id, userId: userObj.id, action: status === 'FULFILLED' ? 'FULFILL' : 'CONFIRM', entity: 'ORDER', entityId: order.id } });
       }
+      if (paid) await tx.auditLog.create({ data: { storeId: id, branchId: branch.id, userId: userObj.id, action: 'PAY', entity: 'ORDER', entityId: order.id } })
     };
 
     await createOrder(pusat, 'Nadia Putri', [{ sku: 'KOPI-001', qty: 2 }, { sku: 'KUE-005', qty: 1 }], 'FULFILLED', staffPst);
     await createOrder(pusat, 'Raka Santoso', [{ sku: 'TEH-002', qty: 1 }, { sku: 'ROTI-006', qty: 2 }], 'CONFIRMED', staffPst);
     await createOrder(pusat, 'Kopi Sebelah', [{ sku: 'KEMASAN-012', qty: 50 }], 'DRAFT', staffPst);
 
-    await createOrder(selatan, 'Ibu Ratna', [{ sku: 'SUSU-007', qty: 4 }, { sku: 'SIRUP-004', qty: 1 }], 'CONFIRMED', staffSel);
+    await createOrder(selatan, 'Ibu Ratna', [{ sku: 'SUSU-007', qty: 4 }, { sku: 'SIRUP-004', qty: 1 }], 'CONFIRMED', staffSel, true);
     await createOrder(selatan, 'Bapak Andi', [{ sku: 'MESIN-009', qty: 1 }], 'FULFILLED', mgrSel);
     await createOrder(selatan, 'CV. Maju', [{ sku: 'KOPI-001', qty: 5 }], 'DRAFT', staffSel);
 

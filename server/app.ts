@@ -8,6 +8,7 @@ import { loadEnvFile } from 'node:process'
 import { PrismaClient, Prisma, Role, OrderStatus } from '@prisma/client'
 import { z, ZodError } from 'zod'
 import { orderTransition } from './orderRules.js'
+import { canFulfill, paymentTransition } from './paymentRules.js'
 import { buildOrderWorkbook } from './reportWorkbook.js'
 import { cleanupExpiredDemos, createDemoSandbox, demoAge, demoHasCapacity } from './demoSandbox.js'
 
@@ -225,6 +226,7 @@ app.post('/api/stock-movements', async (req, res) => {
   const me = identity(req)
   if (me.isDemo && await db.stockMovement.count({ where: { storeId: me.storeId } }) >= 200) throw new ApiError(429, 'Batas catatan stok ruang demo tercapai.')
   const body = parse(z.object({ productId: z.string().min(1), type: z.enum(['IN', 'ADJUSTMENT']), quantity: int.min(-1_000_000).max(1_000_000), reason: z.string().trim().min(3).max(200) }), req.body)
+  if (me.role === 'STAFF' && body.type === 'ADJUSTMENT') throw new ApiError(403, 'Koreksi stok hanya dapat dilakukan manajer atau pemilik.')
   if (body.type === 'IN' && body.quantity <= 0) throw new ApiError(400, 'Stok masuk harus lebih dari nol.')
   if (body.type === 'ADJUSTMENT' && body.quantity === 0) throw new ApiError(400, 'Koreksi stok tidak boleh nol.')
   const movement = await db.$transaction(async tx => {
@@ -270,6 +272,7 @@ app.post('/api/orders', async (req, res) => {
 
 async function changeOrder(req: Request, res: Response, action: 'confirm' | 'cancel' | 'fulfill') {
   const me = identity(req)
+  if (action === 'cancel' && me.role === 'STAFF') throw new ApiError(403, 'Pembatalan pesanan hanya dapat dilakukan manajer atau pemilik.')
   const id = String(req.params.id)
   const order = await db.$transaction(async tx => {
     const current = await tx.order.findFirst({ where: { id, storeId: me.storeId, branchId: me.branchId }, include: { items: true } })
@@ -279,6 +282,8 @@ async function changeOrder(req: Request, res: Response, action: 'confirm' | 'can
     const transition = orderTransition(current.status, action)
     if (transition === 'repeat') return current
     if (transition === 'invalid') throw new ApiError(409, 'Status pesanan tidak mengizinkan tindakan ini.')
+    if (action === 'cancel' && current.paymentStatus !== 'UNPAID') throw new ApiError(409, 'Pesanan yang sudah dibayar harus diproses sebagai refund.')
+    if (action === 'fulfill' && !canFulfill(current.status, current.paymentStatus)) throw new ApiError(409, 'Catat pembayaran sebelum menyelesaikan pesanan.')
     const changed = await tx.order.updateMany({ where: { id, storeId: me.storeId, branchId: me.branchId, status: from }, data: { status: to } })
     if (changed.count !== 1) throw new ApiError(409, 'Pesanan sudah berubah. Muat ulang halaman.')
     if (action !== 'fulfill') {
@@ -300,18 +305,68 @@ app.post('/api/orders/:id/confirm', (req, res) => changeOrder(req, res, 'confirm
 app.post('/api/orders/:id/cancel', (req, res) => changeOrder(req, res, 'cancel'))
 app.post('/api/orders/:id/fulfill', (req, res) => changeOrder(req, res, 'fulfill'))
 
-app.get('/api/reports/summary', async (req, res) => {
+app.post('/api/orders/:id/pay', async (req, res) => {
+  const me = identity(req)
+  const id = String(req.params.id)
+  const { method } = parse(z.object({ method: z.enum(['CASH', 'TRANSFER', 'QRIS', 'CARD']) }), req.body)
+  const order = await db.$transaction(async tx => {
+    const current = await tx.order.findFirst({ where: { id, storeId: me.storeId, branchId: me.branchId } })
+    if (!current) throw new ApiError(404, 'Pesanan tidak ditemukan.')
+    const transition = paymentTransition(current.status, current.paymentStatus, 'pay')
+    if (transition === 'repeat') return current
+    if (transition === 'invalid') throw new ApiError(409, 'Pesanan ini belum dapat dibayar.')
+    const changed = await tx.order.updateMany({
+      where: { id, storeId: me.storeId, branchId: me.branchId, status: 'CONFIRMED', paymentStatus: 'UNPAID' },
+      data: { paymentStatus: 'PAID', paymentMethod: method, paidAt: new Date() }
+    })
+    if (changed.count !== 1) throw new ApiError(409, 'Pembayaran sudah berubah. Muat ulang halaman.')
+    await audit(tx, me, 'PAY', 'ORDER', id)
+    return tx.order.findUniqueOrThrow({ where: { id }, include: { items: { include: { product: { select: { name: true, sku: true } } } } } })
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
+  res.json(order)
+})
+
+app.post('/api/orders/:id/refund', requireRole('OWNER', 'MANAGER'), async (req, res) => {
+  const me = identity(req)
+  const id = String(req.params.id)
+  const order = await db.$transaction(async tx => {
+    const current = await tx.order.findFirst({ where: { id, storeId: me.storeId, branchId: me.branchId }, include: { items: true } })
+    if (!current) throw new ApiError(404, 'Pesanan tidak ditemukan.')
+    const transition = paymentTransition(current.status, current.paymentStatus, 'refund')
+    if (transition === 'repeat') return current
+    if (transition === 'invalid') throw new ApiError(409, 'Hanya pesanan dibayar yang belum selesai yang dapat direfund.')
+    const changed = await tx.order.updateMany({
+      where: { id, storeId: me.storeId, branchId: me.branchId, status: 'CONFIRMED', paymentStatus: 'PAID' },
+      data: { status: 'CANCELLED', paymentStatus: 'REFUNDED', refundedAt: new Date() }
+    })
+    if (changed.count !== 1) throw new ApiError(409, 'Pesanan sudah berubah. Muat ulang halaman.')
+    for (const item of [...current.items].sort((a, b) => a.productId.localeCompare(b.productId))) {
+      const inventory = await tx.branchInventory.update({
+        where: { branchId_productId: { branchId: me.branchId, productId: item.productId } },
+        data: { stock: { increment: item.quantity } }
+      })
+      await tx.stockMovement.create({ data: { storeId: me.storeId, branchId: me.branchId, productId: item.productId, orderId: id, userId: me.id, type: 'RETURN', quantity: item.quantity, balanceAfter: inventory.stock, reason: `Refund pesanan ${current.number}` } })
+    }
+    await audit(tx, me, 'REFUND', 'ORDER', id)
+    return tx.order.findUniqueOrThrow({ where: { id }, include: { items: { include: { product: { select: { name: true, sku: true } } } } } })
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
+  res.json(order)
+})
+
+app.get('/api/reports/summary', requireRole('OWNER', 'MANAGER'), async (req, res) => {
   const me = identity(req)
   const branchId = me.branchId
-  const [products, lowStock, orders, confirmed, revenue, recent] = await Promise.all([
+  const [products, lowStock, orders, confirmed, paid, unpaid, revenue, recent] = await Promise.all([
     db.product.count({ where: { storeId: me.storeId, active: true } }),
     db.$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*)::bigint AS count FROM "Product" p LEFT JOIN "BranchInventory" i ON i."productId" = p.id AND i."branchId" = ${branchId} WHERE p."storeId" = ${me.storeId} AND p.active = true AND COALESCE(i.stock, 0) <= p."minStock"`,
     db.order.count({ where: { storeId: me.storeId, branchId } }),
     db.order.count({ where: { storeId: me.storeId, branchId, status: { in: ['CONFIRMED', 'FULFILLED'] } } }),
-    db.order.aggregate({ where: { storeId: me.storeId, branchId, status: { in: ['CONFIRMED', 'FULFILLED'] } }, _sum: { total: true } }),
+    db.order.count({ where: { storeId: me.storeId, branchId, paymentStatus: 'PAID' } }),
+    db.order.count({ where: { storeId: me.storeId, branchId, status: 'CONFIRMED', paymentStatus: 'UNPAID' } }),
+    db.order.aggregate({ where: { storeId: me.storeId, branchId, paymentStatus: 'PAID' }, _sum: { total: true } }),
     db.auditLog.findMany({ where: { storeId: me.storeId, branchId }, include: { user: { select: { name: true } } }, orderBy: { createdAt: 'desc' }, take: 8 })
   ])
-  res.json({ products, lowStock: Number(lowStock[0].count), orders, confirmed, revenue: revenue._sum.total || 0, recent })
+  res.json({ products, lowStock: Number(lowStock[0].count), orders, confirmed, paid, unpaid, revenue: revenue._sum.total || 0, recent })
 })
 app.get('/api/dashboard', async (req, res) => {
   const me = identity(req)
@@ -333,10 +388,10 @@ app.get('/api/dashboard', async (req, res) => {
       db.product.count({ where: { storeId, active: true } }),
       db.order.count({ where: { storeId } }),
       db.order.count({ where: { storeId, status: { in: ['CONFIRMED', 'FULFILLED'] } } }),
-      db.order.aggregate({ where: { storeId, status: { in: ['CONFIRMED', 'FULFILLED'] } }, _sum: { total: true } }),
+      db.order.aggregate({ where: { storeId, paymentStatus: 'PAID' }, _sum: { total: true } }),
       db.user.count({ where: { storeId, active: true } }),
       db.auditLog.findMany({ where: { storeId }, include: { user: { select: { name: true } }, branch: { select: { name: true } } }, orderBy: { createdAt: 'desc' }, take: 6 }),
-      db.branch.findMany({ where: { storeId }, include: { orders: { where: { status: { in: ['CONFIRMED', 'FULFILLED'] } }, select: { total: true } } }, orderBy: { createdAt: 'asc' } }),
+      db.branch.findMany({ where: { storeId }, include: { orders: { where: { paymentStatus: 'PAID' }, select: { total: true } } }, orderBy: { createdAt: 'asc' } }),
       db.$queryRaw<Array<{ branchId: string; count: bigint }>>`SELECT b.id AS "branchId", COUNT(p.id)::bigint AS count FROM "Branch" b CROSS JOIN "Product" p LEFT JOIN "BranchInventory" i ON i."branchId" = b.id AND i."productId" = p.id WHERE b."storeId" = ${storeId} AND p."storeId" = ${storeId} AND p.active = true AND COALESCE(i.stock, 0) <= p."minStock" GROUP BY b.id`
     ])
     return res.json({ role: me.role, products, lowStock: branchAlerts.reduce((sum, row) => sum + Number(row.count), 0), orders, confirmed, revenue: revenue._sum.total || 0, activeUsers, recent,
@@ -354,12 +409,12 @@ app.get('/api/dashboard', async (req, res) => {
   }
   const queue = await db.order.findMany({
     where: { storeId, branchId, status: { in: ['DRAFT', 'CONFIRMED'] } },
-    select: { id: true, number: true, customerName: true, status: true, createdAt: true },
+    select: { id: true, number: true, customerName: true, status: true, paymentStatus: true, createdAt: true },
     orderBy: { createdAt: 'asc' }, take: 6
   })
   return res.json({ role: me.role, lowStock, lowStockProducts: products, draftOrders, confirmedOrders, queue })
 })
-app.get('/api/reports/orders.xlsx', async (req, res) => {
+app.get('/api/reports/orders.xlsx', requireRole('OWNER', 'MANAGER'), async (req, res) => {
   const me = identity(req)
   const orders = await db.order.findMany({ where: { storeId: me.storeId, branchId: me.branchId }, orderBy: { createdAt: 'desc' } })
   const workbook = buildOrderWorkbook(`${me.storeName} / ${me.branchName}`, orders)
