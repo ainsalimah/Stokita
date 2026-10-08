@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import argon2 from 'argon2'
-import { PrismaClient, Role } from '@prisma/client'
+import { PrismaClient, Prisma, Role } from '@prisma/client'
 
 export const demoAge = 24 * 60 * 60 * 1000
 const maxActiveDemos = 150
@@ -76,6 +76,8 @@ export async function createDemoSandbox(db: PrismaClient, role: Role, now = new 
 
     const user = role === 'OWNER' ? owner : role === 'MANAGER' ? mgrSel : staffPst
 
+    const inventoryRows = []
+    const movementRows = []
     for (const branch of [pusat, selatan, barat]) {
       const factor = branch.id === pusat.id ? 1 : branch.id === selatan.id ? 0.6 : 0.35
       for (const product of store.products) {
@@ -84,13 +86,18 @@ export async function createDemoSandbox(db: PrismaClient, role: Role, now = new 
         if (branch.id === selatan.id && product.sku === 'TAS-010') stock = 0;
         if (branch.id === barat.id && product.category === 'Bahan Baku') stock = Math.floor(product.minStock * 0.8);
         
-        await tx.branchInventory.create({ data: { storeId: id, branchId: branch.id, productId: product.id, stock } })
-        
-        if (stock > 0) {
-          await tx.stockMovement.create({ data: { storeId: id, branchId: branch.id, productId: product.id, userId: owner.id, type: 'IN', quantity: stock, balanceAfter: stock, reason: 'Stok awal demo' } })
-        }
+        inventoryRows.push({ storeId: id, branchId: branch.id, productId: product.id, stock })
+        if (stock > 0) movementRows.push({ storeId: id, branchId: branch.id, productId: product.id, userId: owner.id, type: 'IN' as const, quantity: stock, balanceAfter: stock, reason: 'Stok awal demo' })
       }
     }
+    await tx.branchInventory.createMany({ data: inventoryRows })
+    await tx.stockMovement.createMany({ data: movementRows })
+
+    const inventoryKey = (branchId: string, productId: string) => `${branchId}:${productId}`
+    const balances = new Map(inventoryRows.map(row => [inventoryKey(row.branchId, row.productId), row.stock]))
+    const changedInventories = new Map<string, { branchId: string; productId: string; stock: number }>()
+    const saleMovements: Prisma.StockMovementCreateManyInput[] = []
+    const orderAudits: Prisma.AuditLogCreateManyInput[] = []
 
     let orderCounter = 1;
     const createOrder = async (branch: any, customer: string, items: any[], status: 'DRAFT' | 'CONFIRMED' | 'FULFILLED', userObj: any, paid = status === 'FULFILLED') => {
@@ -113,22 +120,20 @@ export async function createDemoSandbox(db: PrismaClient, role: Role, now = new 
       if (status !== 'DRAFT') {
         for (const i of items) {
           const p = store.products.find(prod => prod.sku === i.sku)!;
-          const inv = await tx.branchInventory.findUnique({ where: { branchId_productId: { branchId: branch.id, productId: p.id } } });
-          const newStock = inv!.stock - i.qty;
-          await tx.branchInventory.update({ where: { branchId_productId: { branchId: branch.id, productId: p.id } }, data: { stock: newStock } });
-          
-          await tx.stockMovement.create({ data: {
+          const key = inventoryKey(branch.id, p.id)
+          const newStock = (balances.get(key) ?? 0) - i.qty
+          balances.set(key, newStock)
+          changedInventories.set(key, { branchId: branch.id, productId: p.id, stock: newStock })
+          saleMovements.push({
             storeId: id, branchId: branch.id, productId: p.id, orderId: order.id, userId: userObj.id,
             type: 'SALE', quantity: -i.qty, balanceAfter: newStock, reason: `Konfirmasi pesanan ${orderNum}`
-          }});
+          })
         }
       }
       
-      await tx.auditLog.create({ data: { storeId: id, branchId: branch.id, userId: userObj.id, action: 'CREATE', entity: 'ORDER', entityId: order.id } });
-      if (status !== 'DRAFT') {
-         await tx.auditLog.create({ data: { storeId: id, branchId: branch.id, userId: userObj.id, action: status === 'FULFILLED' ? 'FULFILL' : 'CONFIRM', entity: 'ORDER', entityId: order.id } });
-      }
-      if (paid) await tx.auditLog.create({ data: { storeId: id, branchId: branch.id, userId: userObj.id, action: 'PAY', entity: 'ORDER', entityId: order.id } })
+      orderAudits.push({ storeId: id, branchId: branch.id, userId: userObj.id, action: 'CREATE', entity: 'ORDER', entityId: order.id })
+      if (status !== 'DRAFT') orderAudits.push({ storeId: id, branchId: branch.id, userId: userObj.id, action: status === 'FULFILLED' ? 'FULFILL' : 'CONFIRM', entity: 'ORDER', entityId: order.id })
+      if (paid) orderAudits.push({ storeId: id, branchId: branch.id, userId: userObj.id, action: 'PAY', entity: 'ORDER', entityId: order.id })
     };
 
     await createOrder(pusat, 'Nadia Putri', [{ sku: 'KOPI-001', qty: 2 }, { sku: 'KUE-005', qty: 1 }], 'FULFILLED', staffPst);
@@ -142,6 +147,12 @@ export async function createDemoSandbox(db: PrismaClient, role: Role, now = new 
     await createOrder(barat, 'Maya', [{ sku: 'MUG-003', qty: 2 }], 'CONFIRMED', staffBar);
     await createOrder(barat, 'Agus', [{ sku: 'SNACK-011', qty: 3 }, { sku: 'TEH-002', qty: 1 }], 'DRAFT', staffBar);
     await createOrder(barat, 'Dina', [{ sku: 'GELAS-008', qty: 2 }], 'FULFILLED', mgrBar);
+
+    for (const inventory of changedInventories.values()) {
+      await tx.branchInventory.update({ where: { branchId_productId: { branchId: inventory.branchId, productId: inventory.productId } }, data: { stock: inventory.stock } })
+    }
+    await tx.stockMovement.createMany({ data: saleMovements })
+    await tx.auditLog.createMany({ data: orderAudits })
 
     return { user, store }
   }, { timeout: 30_000 })
