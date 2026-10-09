@@ -108,8 +108,9 @@ app.post('/api/auth/demo-switch', async (req: AuthedRequest, res) => {
   const { userId } = parse(z.object({ userId: z.string().min(1) }), req.body)
   const target = await db.user.findFirst({ where: { id: userId, storeId: me.storeId, active: true }, include: { store: true, branch: true } })
   if (!target) throw new ApiError(404, 'Akun demo tidak ditemukan.')
-  const branchId = target.role === 'OWNER' ? me.branchId : target.branchId
-  const branch = branchId ? await db.branch.findFirst({ where: { id: branchId, storeId: me.storeId, active: true } }) : null
+  const branch = target.role === 'OWNER'
+    ? await db.branch.findFirst({ where: { storeId: me.storeId, active: true }, orderBy: { createdAt: 'asc' } })
+    : target.branchId ? await db.branch.findFirst({ where: { id: target.branchId, storeId: me.storeId, active: true } }) : null
   if (!branch) throw new ApiError(403, 'Cabang akun demo tidak tersedia.')
   await db.session.update({ where: { tokenHash: tokenHash(req.sessionToken!) }, data: { userId: target.id, activeBranchId: branch.id } })
   res.setHeader('Cache-Control', 'no-store')
