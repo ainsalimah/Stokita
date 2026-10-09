@@ -14,6 +14,8 @@ export async function cleanupExpiredDemos(db: PrismaClient, now = new Date()) {
     await tx.session.deleteMany({ where: { user: { storeId: { in: ids } } } })
     await tx.stockMovement.deleteMany({ where: { storeId: { in: ids } } })
     await tx.auditLog.deleteMany({ where: { storeId: { in: ids } } })
+    await tx.purchaseOrder.deleteMany({ where: { storeId: { in: ids } } })
+    await tx.supplier.deleteMany({ where: { storeId: { in: ids } } })
     await tx.stockTransfer.deleteMany({ where: { storeId: { in: ids } } })
     await tx.order.deleteMany({ where: { storeId: { in: ids } } })
     await tx.branchInventory.deleteMany({ where: { storeId: { in: ids } } })
@@ -161,6 +163,22 @@ export async function createDemoSandbox(db: PrismaClient, role: Role, now = new 
     changedInventories.set(transferKey, { branchId: pusat.id, productId: transferProduct.id, stock: transferBalance })
     saleMovements.push({ storeId: id, branchId: pusat.id, productId: transferProduct.id, transferId: demoTransfer.id, userId: owner.id, type: 'TRANSFER_OUT', quantity: -20, balanceAfter: transferBalance, reason: 'Pengiriman transfer TRF-DEMO-001' })
     orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'SEND', entity: 'TRANSFER', entityId: demoTransfer.id })
+
+    const [supplierCoffee, supplierPackaging] = await Promise.all([
+      tx.supplier.create({ data: { storeId: id, name: 'Nusantara Coffee Supply', contactName: 'Dewi Lestari', email: 'dewi@nusantara.demo', phone: '0812-0000-1001' } }),
+      tx.supplier.create({ data: { storeId: id, name: 'Prima Kemasan', contactName: 'Rudi Hartono', email: 'rudi@prima.demo', phone: '0812-0000-2002' } })
+    ])
+    const mug = store.products.find(product => product.sku === 'MUG-003')!
+    const glass = store.products.find(product => product.sku === 'GELAS-008')!
+    const demoPurchase = await tx.purchaseOrder.create({ data: {
+      storeId: id, branchId: pusat.id, supplierId: supplierCoffee.id, createdById: owner.id, number: 'PO-DEMO-001', status: 'ORDERED',
+      totalCost: 1_400_000, expectedAt: new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000), orderedAt: now, note: 'Restok peralatan untuk cabang pusat',
+      items: { create: [{ productId: mug.id, quantity: 10, unitCost: 90000 }, { productId: glass.id, quantity: 20, unitCost: 25000 }] }
+    } })
+    orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'CREATE', entity: 'PURCHASE_ORDER', entityId: demoPurchase.id })
+    orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'ORDER', entity: 'PURCHASE_ORDER', entityId: demoPurchase.id })
+    orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'CREATE', entity: 'SUPPLIER', entityId: supplierCoffee.id })
+    orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'CREATE', entity: 'SUPPLIER', entityId: supplierPackaging.id })
 
     for (const inventory of changedInventories.values()) {
       await tx.branchInventory.update({ where: { branchId_productId: { branchId: inventory.branchId, productId: inventory.productId } }, data: { stock: inventory.stock } })

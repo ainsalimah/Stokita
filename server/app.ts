@@ -10,6 +10,7 @@ import { z, ZodError } from 'zod'
 import { orderTransition } from './orderRules.js'
 import { canFulfill, paymentTransition } from './paymentRules.js'
 import { transferTransition } from './transferRules.js'
+import { purchaseTransition } from './purchaseRules.js'
 import { buildOrderWorkbook } from './reportWorkbook.js'
 import { cleanupExpiredDemos, createDemoSandbox, demoAge, demoHasCapacity } from './demoSandbox.js'
 
@@ -35,6 +36,7 @@ const parse = <T extends z.ZodTypeAny>(schema: T, value: unknown): z.infer<T> =>
 const int = z.coerce.number().int()
 const pageSchema = z.object({ page: int.min(1).default(1), limit: int.min(1).max(100).default(20), search: z.string().trim().max(100).default('') })
 const productBody = z.object({ sku: z.string().trim().min(1).max(40), name: z.string().trim().min(2).max(120), category: z.string().trim().max(80).optional().nullable(), price: int.min(0).max(1_000_000_000), minStock: int.min(0).max(1_000_000), active: z.boolean().optional() })
+const supplierBody = z.object({ name: z.string().trim().min(2).max(120), contactName: z.string().trim().max(100).optional().nullable(), email: z.string().trim().email().max(160).optional().nullable().or(z.literal('')), phone: z.string().trim().max(40).optional().nullable(), active: z.boolean().optional() })
 const publicUser = (user: { id: string; name: string; email: string; role: Role; active: boolean; branchId?: string | null; branch?: { name: string } | null }) => ({ id: user.id, name: user.name, email: user.email, role: user.role, active: user.active, branchId: user.branchId ?? null, branchName: user.branch?.name ?? null })
 async function issueSession(res: Response, user: { id: string; name: string; email: string; role: Role; active: boolean; branchId: string | null }, store: { id: string; name: string; isDemo: boolean; demoExpiresAt: Date | null }, age: number) {
   const token = randomBytes(32).toString('hex')
@@ -334,6 +336,131 @@ async function changeTransfer(req: Request, res: Response, action: 'send' | 'rec
 app.post('/api/transfers/:id/send', requireRole('OWNER', 'MANAGER'), (req, res) => changeTransfer(req, res, 'send'))
 app.post('/api/transfers/:id/receive', requireRole('OWNER', 'MANAGER'), (req, res) => changeTransfer(req, res, 'receive'))
 app.post('/api/transfers/:id/cancel', requireRole('OWNER', 'MANAGER'), (req, res) => changeTransfer(req, res, 'cancel'))
+
+const purchaseInclude = {
+  branch: { select: { id: true, name: true, code: true } },
+  supplier: { select: { id: true, name: true, contactName: true, phone: true } },
+  createdBy: { select: { name: true } },
+  receivedBy: { select: { name: true } },
+  items: { include: { product: { select: { name: true, sku: true } } } }
+} as const
+
+app.get('/api/suppliers', requireRole('OWNER', 'MANAGER'), async (req, res) => {
+  const me = identity(req)
+  const suppliers = await db.supplier.findMany({ where: { storeId: me.storeId }, orderBy: [{ active: 'desc' }, { name: 'asc' }] })
+  res.json(suppliers)
+})
+
+app.post('/api/suppliers', requireRole('OWNER'), async (req, res) => {
+  const me = identity(req)
+  if (me.isDemo && await db.supplier.count({ where: { storeId: me.storeId } }) >= 20) throw new ApiError(429, 'Batas pemasok ruang demo tercapai.')
+  const body = parse(supplierBody, req.body)
+  const supplier = await db.$transaction(async tx => {
+    const created = await tx.supplier.create({ data: { storeId: me.storeId, name: body.name, contactName: body.contactName || null, email: body.email || null, phone: body.phone || null, active: body.active ?? true } })
+    await audit(tx, me, 'CREATE', 'SUPPLIER', created.id)
+    return created
+  })
+  res.status(201).json(supplier)
+})
+
+app.patch('/api/suppliers/:id', requireRole('OWNER'), async (req, res) => {
+  const me = identity(req)
+  const id = String(req.params.id)
+  const body = parse(supplierBody.partial(), req.body)
+  const existing = await db.supplier.findFirst({ where: { id, storeId: me.storeId } })
+  if (!existing) throw new ApiError(404, 'Pemasok tidak ditemukan.')
+  const supplier = await db.$transaction(async tx => {
+    const updated = await tx.supplier.update({ where: { id }, data: { ...body, ...(body.contactName !== undefined ? { contactName: body.contactName || null } : {}), ...(body.email !== undefined ? { email: body.email || null } : {}), ...(body.phone !== undefined ? { phone: body.phone || null } : {}) } })
+    await audit(tx, me, 'UPDATE', 'SUPPLIER', id)
+    return updated
+  })
+  res.json(supplier)
+})
+
+app.get('/api/purchase-options', requireRole('OWNER', 'MANAGER'), async (req, res) => {
+  const me = identity(req)
+  const [suppliers, lowStock] = await Promise.all([
+    db.supplier.findMany({ where: { storeId: me.storeId, active: true }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+    db.$queryRaw<Array<{ id: string; name: string; sku: string; stock: number; minStock: number; recommendedQty: number }>>`
+      SELECT p.id, p.name, p.sku, COALESCE(i.stock, 0)::integer AS stock, p."minStock",
+        GREATEST(p."minStock" * 2 - COALESCE(i.stock, 0), 1)::integer AS "recommendedQty"
+      FROM "Product" p
+      LEFT JOIN "BranchInventory" i ON i."productId" = p.id AND i."branchId" = ${me.branchId}
+      WHERE p."storeId" = ${me.storeId} AND p.active = true AND COALESCE(i.stock, 0) <= p."minStock"
+      ORDER BY (p."minStock" - COALESCE(i.stock, 0)) DESC, p.name ASC
+      LIMIT 12
+    `
+  ])
+  res.json({ suppliers, lowStock })
+})
+
+app.get('/api/purchase-orders', requireRole('OWNER', 'MANAGER'), async (req, res) => {
+  const me = identity(req)
+  const { page, limit } = parse(pageSchema, req.query)
+  const where: Prisma.PurchaseOrderWhereInput = { storeId: me.storeId, branchId: me.branchId }
+  const [items, total] = await db.$transaction([
+    db.purchaseOrder.findMany({ where, include: purchaseInclude, orderBy: { createdAt: 'desc' }, skip: (page - 1) * limit, take: limit }),
+    db.purchaseOrder.count({ where })
+  ])
+  res.json({ items, total, page, limit })
+})
+
+app.post('/api/purchase-orders', requireRole('OWNER', 'MANAGER'), async (req, res) => {
+  const me = identity(req)
+  if (me.isDemo && await db.purchaseOrder.count({ where: { storeId: me.storeId } }) >= 40) throw new ApiError(429, 'Batas purchase order ruang demo tercapai.')
+  const body = parse(z.object({
+    supplierId: z.string().min(1), expectedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(), note: z.string().trim().max(200).optional().nullable(),
+    items: z.array(z.object({ productId: z.string().min(1), quantity: int.min(1).max(1_000_000), unitCost: int.min(0).max(1_000_000_000) })).min(1).max(50)
+  }), req.body)
+  if (new Set(body.items.map(item => item.productId)).size !== body.items.length) throw new ApiError(400, 'Produk yang sama hanya boleh muncul sekali.')
+  const purchaseOrder = await db.$transaction(async tx => {
+    const [supplier, products] = await Promise.all([
+      tx.supplier.findFirst({ where: { id: body.supplierId, storeId: me.storeId, active: true } }),
+      tx.product.findMany({ where: { id: { in: body.items.map(item => item.productId) }, storeId: me.storeId, active: true }, select: { id: true } })
+    ])
+    if (!supplier) throw new ApiError(404, 'Pemasok tidak ditemukan atau tidak aktif.')
+    if (products.length !== body.items.length) throw new ApiError(400, 'Ada produk yang tidak tersedia.')
+    const totalCost = body.items.reduce((sum, item) => sum + item.quantity * item.unitCost, 0)
+    if (!Number.isSafeInteger(totalCost) || totalCost > 2_147_483_647) throw new ApiError(400, 'Total purchase order terlalu besar.')
+    const created = await tx.purchaseOrder.create({ data: {
+      storeId: me.storeId, branchId: me.branchId, supplierId: supplier.id, createdById: me.id,
+      number: `PO-${Date.now().toString(36).toUpperCase()}-${randomBytes(3).toString('hex').toUpperCase()}`,
+      totalCost, expectedAt: body.expectedAt ? new Date(`${body.expectedAt}T12:00:00.000Z`) : null, note: body.note || null,
+      items: { create: body.items }
+    }, include: purchaseInclude })
+    await audit(tx, me, 'CREATE', 'PURCHASE_ORDER', created.id)
+    return created
+  })
+  res.status(201).json(purchaseOrder)
+})
+
+async function changePurchaseOrder(req: Request, res: Response, action: 'order' | 'receive' | 'cancel') {
+  const me = identity(req)
+  const id = String(req.params.id)
+  const purchaseOrder = await db.$transaction(async tx => {
+    const current = await tx.purchaseOrder.findFirst({ where: { id, storeId: me.storeId, branchId: me.branchId }, include: { items: true } })
+    if (!current) throw new ApiError(404, 'Purchase order tidak ditemukan pada cabang aktif.')
+    const transition = purchaseTransition(current.status, action)
+    if (transition === 'repeat') return tx.purchaseOrder.findUniqueOrThrow({ where: { id }, include: purchaseInclude })
+    if (transition === 'invalid') throw new ApiError(409, 'Status purchase order tidak mengizinkan tindakan ini.')
+    const nextStatus = action === 'order' ? 'ORDERED' : action === 'receive' ? 'RECEIVED' : 'CANCELLED'
+    const changed = await tx.purchaseOrder.updateMany({ where: { id, status: current.status }, data: { status: nextStatus, ...(action === 'order' ? { orderedAt: new Date() } : {}), ...(action === 'receive' ? { receivedAt: new Date(), receivedById: me.id } : {}) } })
+    if (changed.count !== 1) throw new ApiError(409, 'Purchase order sudah berubah. Muat ulang halaman.')
+    if (action === 'receive') {
+      for (const item of [...current.items].sort((a, b) => a.productId.localeCompare(b.productId))) {
+        const inventory = await tx.branchInventory.upsert({ where: { branchId_productId: { branchId: me.branchId, productId: item.productId } }, create: { storeId: me.storeId, branchId: me.branchId, productId: item.productId, stock: item.quantity }, update: { stock: { increment: item.quantity } } })
+        await tx.stockMovement.create({ data: { storeId: me.storeId, branchId: me.branchId, productId: item.productId, purchaseOrderId: id, userId: me.id, type: 'PURCHASE_RECEIPT', quantity: item.quantity, balanceAfter: inventory.stock, reason: `Penerimaan purchase order ${current.number}` } })
+      }
+    }
+    await audit(tx, me, action.toUpperCase(), 'PURCHASE_ORDER', id)
+    return tx.purchaseOrder.findUniqueOrThrow({ where: { id }, include: purchaseInclude })
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 20_000 })
+  res.json(purchaseOrder)
+}
+
+app.post('/api/purchase-orders/:id/order', requireRole('OWNER', 'MANAGER'), (req, res) => changePurchaseOrder(req, res, 'order'))
+app.post('/api/purchase-orders/:id/receive', requireRole('OWNER', 'MANAGER'), (req, res) => changePurchaseOrder(req, res, 'receive'))
+app.post('/api/purchase-orders/:id/cancel', requireRole('OWNER', 'MANAGER'), (req, res) => changePurchaseOrder(req, res, 'cancel'))
 
 app.get('/api/orders', async (req, res) => {
   const me = identity(req)

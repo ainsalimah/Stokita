@@ -84,6 +84,16 @@ assert.equal((await request(`/transfers/${transfer.data.id}/receive`, owner, 'PO
 assert.equal((await request(`/transfers/${transfer.data.id}/receive`, owner, 'POST')).status, 200)
 assert.equal((await request('/auth/active-branch', owner, 'PATCH', { branchId: pusat.id })).status, 200)
 
+const supplier = await request('/suppliers', owner, 'POST', { name: `Pemasok ${suffix}`, contactName: 'Kontak Uji', phone: '0800000000' })
+assert.equal(supplier.status, 201)
+assert.equal((await request('/suppliers', manager, 'POST', { name: 'Pemasok Ilegal' })).status, 403)
+const purchase = await request('/purchase-orders', owner, 'POST', { supplierId: supplier.data.id, note: 'Restok pengujian', items: [{ productId, quantity: 1, unitCost: 7000 }] })
+assert.equal(purchase.status, 201)
+assert.equal((await request('/purchase-orders', staff)).status, 403)
+assert.equal((await request(`/purchase-orders/${purchase.data.id}/order`, owner, 'POST')).status, 200)
+assert.equal((await request(`/purchase-orders/${purchase.data.id}/receive`, owner, 'POST')).status, 200)
+assert.equal((await request(`/purchase-orders/${purchase.data.id}/receive`, owner, 'POST')).status, 200)
+
 const dashboard = await request('/dashboard', owner)
 assert.equal(dashboard.status, 200)
 assert.ok(dashboard.data.branchCount >= 3)
