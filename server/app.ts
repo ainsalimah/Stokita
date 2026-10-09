@@ -94,6 +94,27 @@ app.use('/api', async (req: AuthedRequest, _res, next) => {
   } catch (error) { next(error) }
 })
 app.get('/api/auth/me', (req, res) => { const me = identity(req); res.setHeader('Cache-Control', 'no-store'); res.json({ user: { id: me.id, name: me.name, email: me.email, role: me.role }, store: { id: me.storeId, name: me.storeName, isDemo: me.isDemo }, activeBranch: { id: me.branchId, name: me.branchName } }) })
+app.get('/api/auth/demo-users', async (req, res) => {
+  const me = identity(req)
+  if (!me.isDemo) throw new ApiError(403, 'Pergantian akun hanya tersedia di ruang demo.')
+  const users = await db.user.findMany({ where: { storeId: me.storeId, active: true }, include: { branch: { select: { name: true } } } })
+  const roleOrder: Record<Role, number> = { OWNER: 0, MANAGER: 1, STAFF: 2 }
+  users.sort((a, b) => roleOrder[a.role] - roleOrder[b.role] || (a.branch?.name || '').localeCompare(b.branch?.name || '') || a.name.localeCompare(b.name))
+  res.json(users.map(publicUser))
+})
+app.post('/api/auth/demo-switch', async (req: AuthedRequest, res) => {
+  const me = identity(req)
+  if (!me.isDemo) throw new ApiError(403, 'Pergantian akun hanya tersedia di ruang demo.')
+  const { userId } = parse(z.object({ userId: z.string().min(1) }), req.body)
+  const target = await db.user.findFirst({ where: { id: userId, storeId: me.storeId, active: true }, include: { store: true, branch: true } })
+  if (!target) throw new ApiError(404, 'Akun demo tidak ditemukan.')
+  const branchId = target.role === 'OWNER' ? me.branchId : target.branchId
+  const branch = branchId ? await db.branch.findFirst({ where: { id: branchId, storeId: me.storeId, active: true } }) : null
+  if (!branch) throw new ApiError(403, 'Cabang akun demo tidak tersedia.')
+  await db.session.update({ where: { tokenHash: tokenHash(req.sessionToken!) }, data: { userId: target.id, activeBranchId: branch.id } })
+  res.setHeader('Cache-Control', 'no-store')
+  res.json({ user: publicUser(target), store: { id: target.store.id, name: target.store.name, isDemo: true, demoExpiresAt: target.store.demoExpiresAt }, activeBranch: { id: branch.id, name: branch.name, code: branch.code } })
+})
 app.patch('/api/auth/active-branch', requireRole('OWNER'), async (req: AuthedRequest, res) => {
   const me = identity(req)
   const { branchId } = parse(z.object({ branchId: z.string().min(1) }), req.body)

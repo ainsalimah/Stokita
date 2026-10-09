@@ -25,6 +25,15 @@
 .branch-picker select { width: 100%; border: 1px solid #c9dce5; border-radius: 8px; padding: 9px; background: #fff; color: #17334a; font: inherit; }
 .branch-picker strong { color: #fff; font-size: 14px; }
 .branch-picker small { color: #ffd6c8; }
+.branch-picker span { color: #8fa9b8; font-size: 11px; line-height: 1.45; }
+.demo-account-picker { margin: 0 16px 12px; padding: 13px 14px; border-radius: 10px; background: #10344a; border: 1px solid rgba(108, 222, 237, .22); display: grid; gap: 7px; }
+.demo-account-picker label { color: #76d8e8; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
+.demo-account-picker select { width: 100%; min-width: 0; border: 1px solid #b9d6df; border-radius: 8px; padding: 9px; background: #fff; color: #17334a; font: inherit; font-size: 12px; }
+.demo-account-picker small { color: #91aab8; font-size: 10px; line-height: 1.4; }
+.action-card { width: 100%; border: 1px solid #e6ecf1; font: inherit; text-align: left; cursor: pointer; transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease; }
+.action-card:hover { transform: translateY(-2px); border-color: #d5bd91; box-shadow: 0 10px 28px #13253a12; }
+.action-card:focus-visible { outline: 3px solid #7bd6e5; outline-offset: 3px; }
+.stat-card>.stat-arrow { top: auto; right: 1.15rem; bottom: 1.1rem; color: #b77a31; }
 .network-panel { margin-bottom: 24px; }
 .report-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 
