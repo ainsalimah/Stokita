@@ -189,5 +189,5 @@ export async function createDemoSandbox(db: PrismaClient, role: Role, now = new 
     await tx.auditLog.createMany({ data: orderAudits })
 
     return { user, store }
-  }, { timeout: 30_000 })
+  }, { maxWait: 60_000, timeout: 30_000 })
 }
