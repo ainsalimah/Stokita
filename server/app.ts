@@ -15,7 +15,7 @@ import { buildOrderWorkbook } from './reportWorkbook.js'
 import { cleanupExpiredDemos, createDemoSandbox, demoAge, demoHasCapacity } from './demoSandbox.js'
 
 if (fs.existsSync('.env')) loadEnvFile('.env')
-export const db = new PrismaClient()
+export const db = new PrismaClient({ transactionOptions: { maxWait: 10_000, timeout: 20_000 } })
 export const app = express()
 const day = 24 * 60 * 60 * 1000
 const sessionAge = 7 * day
