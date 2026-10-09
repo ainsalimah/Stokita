@@ -7,7 +7,7 @@ const maxActiveDemos = 150
 const maxNewDemosPerMinute = 15
 
 export async function cleanupExpiredDemos(db: PrismaClient, now = new Date()) {
-  const expired = await db.store.findMany({ where: { isDemo: true, demoExpiresAt: { lte: now } }, select: { id: true }, take: 25 })
+  const expired = await db.store.findMany({ where: { isDemo: true, demoExpiresAt: { lte: now } }, select: { id: true }, take: 5 })
   if (!expired.length) return
   const ids = expired.map(store => store.id)
   await db.$transaction(async tx => {
@@ -23,7 +23,7 @@ export async function cleanupExpiredDemos(db: PrismaClient, now = new Date()) {
     await tx.user.deleteMany({ where: { storeId: { in: ids } } })
     await tx.branch.deleteMany({ where: { storeId: { in: ids } } })
     await tx.store.deleteMany({ where: { id: { in: ids }, isDemo: true } })
-  })
+  }, { maxWait: 10_000, timeout: 20_000 })
 }
 
 export async function demoHasCapacity(db: PrismaClient, now = new Date()) {

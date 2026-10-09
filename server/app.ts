@@ -73,7 +73,7 @@ app.post('/api/auth/login', async (req, res) => {
 })
 app.post('/api/auth/demo', async (req, res) => {
   const { role } = parse(z.object({ role: z.enum(['OWNER', 'MANAGER', 'STAFF']) }), req.body)
-  await cleanupExpiredDemos(db)
+  await cleanupExpiredDemos(db).catch(error => console.error('Demo cleanup error', error))
   if (!(await demoHasCapacity(db))) throw new ApiError(429, 'Ruang demo sedang penuh. Silakan coba beberapa saat lagi.')
   const { user, store } = await createDemoSandbox(db, role)
   res.status(201)
