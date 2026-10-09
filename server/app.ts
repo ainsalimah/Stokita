@@ -728,7 +728,10 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === 'P2002') return res.status(409).json({ error: 'Data dengan nilai tersebut sudah ada.' })
     if (error.code === 'P2034') return res.status(409).json({ error: 'Data sedang berubah. Silakan coba lagi.' })
-    if (error.code === 'P2028') return res.status(503).json({ error: 'Database masih menyiapkan transaksi. Silakan coba lagi.' })
+    if (error.code === 'P2028') {
+      console.error('Prisma transaction error', { code: error.code, message: error.message, meta: error.meta })
+      return res.status(503).json({ error: 'Database masih menyiapkan transaksi. Silakan coba lagi.' })
+    }
   }
   console.error(error)
   res.status(500).json({ error: 'Terjadi kesalahan server.' })
