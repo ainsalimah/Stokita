@@ -65,6 +65,5 @@
 .return-lines small { color: #8a9aaa; font-size: .7rem; font-weight: 500; }
 .return-lines input { width: 110px; }
 .return-count { display: block; color: #a06b1b; margin-top: .35rem; }
-.order-detail > strong small { color: #9aa8b5; text-decoration: line-through; font-size: .7rem; margin-bottom: .15rem; }
+.order-detail > strong small { display: block; color: #9aa8b5; text-decoration: line-through; font-size: .7rem; margin-bottom: .15rem; }
 @media(max-width:760px) { .transfer-list { grid-template-columns: 1fr; padding: .8rem; } .transfer-route { gap: .5rem; } }
-.stock-table .badge.neutral:empty::after { content: "Transfer"; }
