@@ -69,13 +69,17 @@ export async function createDemoSandbox(db: PrismaClient, role: Role, now = new 
     
     const [pusat, selatan, barat] = ['PUSAT', 'SELATAN', 'BARAT'].map(code => store.branches.find(branch => branch.code === code)!)
     
-    const owner = await tx.user.create({ data: { storeId: id, name: 'Alya Pratama', email: `owner+${id}@demo.stokita.local`, passwordHash, role: 'OWNER' } })
-    const mgrPst = await tx.user.create({ data: { storeId: id, branchId: pusat.id, name: 'Arman Hakim', email: `manager.pst+${id}@demo.stokita.local`, passwordHash, role: 'MANAGER' } })
-    const staffPst = await tx.user.create({ data: { storeId: id, branchId: pusat.id, name: 'Bunga Citra', email: `staff.pst+${id}@demo.stokita.local`, passwordHash, role: 'STAFF' } })
-    const mgrSel = await tx.user.create({ data: { storeId: id, branchId: selatan.id, name: 'Bima Saputra', email: `manager.sel+${id}@demo.stokita.local`, passwordHash, role: 'MANAGER' } })
-    const staffSel = await tx.user.create({ data: { storeId: id, branchId: selatan.id, name: 'Citra Dewi', email: `staff.sel+${id}@demo.stokita.local`, passwordHash, role: 'STAFF' } })
-    const mgrBar = await tx.user.create({ data: { storeId: id, branchId: barat.id, name: 'Dodi Hidayat', email: `manager.bar+${id}@demo.stokita.local`, passwordHash, role: 'MANAGER' } })
-    const staffBar = await tx.user.create({ data: { storeId: id, branchId: barat.id, name: 'Eka Sari', email: `staff.bar+${id}@demo.stokita.local`, passwordHash, role: 'STAFF' } })
+    const demoUser = (name: string, email: string, role: Role, branchId: string | null = null) => ({
+      id: randomUUID(), storeId: id, branchId, name, email: `${email}+${id}@demo.stokita.local`, passwordHash, role, active: true
+    })
+    const owner = demoUser('Alya Pratama', 'owner', 'OWNER')
+    const mgrPst = demoUser('Arman Hakim', 'manager.pst', 'MANAGER', pusat.id)
+    const staffPst = demoUser('Bunga Citra', 'staff.pst', 'STAFF', pusat.id)
+    const mgrSel = demoUser('Bima Saputra', 'manager.sel', 'MANAGER', selatan.id)
+    const staffSel = demoUser('Citra Dewi', 'staff.sel', 'STAFF', selatan.id)
+    const mgrBar = demoUser('Dodi Hidayat', 'manager.bar', 'MANAGER', barat.id)
+    const staffBar = demoUser('Eka Sari', 'staff.bar', 'STAFF', barat.id)
+    await tx.user.createMany({ data: [owner, mgrPst, staffPst, mgrSel, staffSel, mgrBar, staffBar] })
 
     const user = role === 'OWNER' ? owner : role === 'MANAGER' ? mgrSel : staffPst
 
@@ -97,24 +101,23 @@ export async function createDemoSandbox(db: PrismaClient, role: Role, now = new 
     const balances = new Map(inventoryRows.map(row => [inventoryKey(row.branchId, row.productId), row.stock]))
     const saleMovements: Prisma.StockMovementCreateManyInput[] = []
     const orderAudits: Prisma.AuditLogCreateManyInput[] = []
+    const orderRows: Prisma.OrderCreateManyInput[] = []
+    const orderItemRows: Prisma.OrderItemCreateManyInput[] = []
 
     let orderCounter = 1;
-    const createOrder = async (branch: any, customer: string, items: any[], status: 'DRAFT' | 'CONFIRMED' | 'FULFILLED', userObj: any, paid = status === 'FULFILLED') => {
+    const createOrder = (branch: any, customer: string, items: any[], status: 'DRAFT' | 'CONFIRMED' | 'FULFILLED', userObj: any, paid = status === 'FULFILLED') => {
+      const orderId = randomUUID()
       const orderNum = `ORD-DEMO-${String(orderCounter++).padStart(3, '0')}`;
       let total = 0;
-      const orderItemsData = items.map(i => {
+      for (const i of items) {
         const p = store.products.find(prod => prod.sku === i.sku)!;
         total += p.price * i.qty;
-        return { productId: p.id, quantity: i.qty, unitPrice: p.price };
-      });
-      
-      const order = await tx.order.create({
-        data: {
-          storeId: id, branchId: branch.id, number: orderNum, customerName: customer, total, status,
-          paymentStatus: paid ? 'PAID' : 'UNPAID', paymentMethod: paid ? 'QRIS' : null, paidAt: paid ? now : null,
-          items: { create: orderItemsData }
-        }
-      });
+        orderItemRows.push({ orderId, productId: p.id, quantity: i.qty, unitPrice: p.price })
+      }
+      orderRows.push({
+        id: orderId, storeId: id, branchId: branch.id, number: orderNum, customerName: customer, total, status,
+        paymentStatus: paid ? 'PAID' : 'UNPAID', paymentMethod: paid ? 'QRIS' : null, paidAt: paid ? now : null
+      })
       
       if (status !== 'DRAFT') {
         for (const i of items) {
@@ -123,61 +126,66 @@ export async function createDemoSandbox(db: PrismaClient, role: Role, now = new 
           const newStock = (balances.get(key) ?? 0) - i.qty
           balances.set(key, newStock)
           saleMovements.push({
-            storeId: id, branchId: branch.id, productId: p.id, orderId: order.id, userId: userObj.id,
+            storeId: id, branchId: branch.id, productId: p.id, orderId, userId: userObj.id,
             type: 'SALE', quantity: -i.qty, balanceAfter: newStock, reason: `Konfirmasi pesanan ${orderNum}`
           })
         }
       }
       
-      orderAudits.push({ storeId: id, branchId: branch.id, userId: userObj.id, action: 'CREATE', entity: 'ORDER', entityId: order.id })
-      if (status !== 'DRAFT') orderAudits.push({ storeId: id, branchId: branch.id, userId: userObj.id, action: status === 'FULFILLED' ? 'FULFILL' : 'CONFIRM', entity: 'ORDER', entityId: order.id })
-      if (paid) orderAudits.push({ storeId: id, branchId: branch.id, userId: userObj.id, action: 'PAY', entity: 'ORDER', entityId: order.id })
+      orderAudits.push({ storeId: id, branchId: branch.id, userId: userObj.id, action: 'CREATE', entity: 'ORDER', entityId: orderId })
+      if (status !== 'DRAFT') orderAudits.push({ storeId: id, branchId: branch.id, userId: userObj.id, action: status === 'FULFILLED' ? 'FULFILL' : 'CONFIRM', entity: 'ORDER', entityId: orderId })
+      if (paid) orderAudits.push({ storeId: id, branchId: branch.id, userId: userObj.id, action: 'PAY', entity: 'ORDER', entityId: orderId })
     };
 
-    await createOrder(pusat, 'Nadia Putri', [{ sku: 'KOPI-001', qty: 2 }, { sku: 'KUE-005', qty: 1 }], 'FULFILLED', staffPst);
-    await createOrder(pusat, 'Raka Santoso', [{ sku: 'TEH-002', qty: 1 }, { sku: 'ROTI-006', qty: 2 }], 'CONFIRMED', staffPst);
-    await createOrder(pusat, 'Kopi Sebelah', [{ sku: 'KEMASAN-012', qty: 50 }], 'DRAFT', staffPst);
+    createOrder(pusat, 'Nadia Putri', [{ sku: 'KOPI-001', qty: 2 }, { sku: 'KUE-005', qty: 1 }], 'FULFILLED', staffPst);
+    createOrder(pusat, 'Raka Santoso', [{ sku: 'TEH-002', qty: 1 }, { sku: 'ROTI-006', qty: 2 }], 'CONFIRMED', staffPst);
+    createOrder(pusat, 'Kopi Sebelah', [{ sku: 'KEMASAN-012', qty: 50 }], 'DRAFT', staffPst);
 
-    await createOrder(selatan, 'Ibu Ratna', [{ sku: 'SUSU-007', qty: 4 }, { sku: 'SIRUP-004', qty: 1 }], 'CONFIRMED', staffSel, true);
-    await createOrder(selatan, 'Bapak Andi', [{ sku: 'MESIN-009', qty: 1 }], 'FULFILLED', mgrSel);
-    await createOrder(selatan, 'CV. Maju', [{ sku: 'KOPI-001', qty: 5 }], 'DRAFT', staffSel);
+    createOrder(selatan, 'Ibu Ratna', [{ sku: 'SUSU-007', qty: 4 }, { sku: 'SIRUP-004', qty: 1 }], 'CONFIRMED', staffSel, true);
+    createOrder(selatan, 'Bapak Andi', [{ sku: 'MESIN-009', qty: 1 }], 'FULFILLED', mgrSel);
+    createOrder(selatan, 'CV. Maju', [{ sku: 'KOPI-001', qty: 5 }], 'DRAFT', staffSel);
 
-    await createOrder(barat, 'Maya', [{ sku: 'MUG-003', qty: 2 }], 'CONFIRMED', staffBar);
-    await createOrder(barat, 'Agus', [{ sku: 'SNACK-011', qty: 3 }, { sku: 'TEH-002', qty: 1 }], 'DRAFT', staffBar);
-    await createOrder(barat, 'Dina', [{ sku: 'GELAS-008', qty: 2 }], 'FULFILLED', mgrBar);
+    createOrder(barat, 'Maya', [{ sku: 'MUG-003', qty: 2 }], 'CONFIRMED', staffBar);
+    createOrder(barat, 'Agus', [{ sku: 'SNACK-011', qty: 3 }, { sku: 'TEH-002', qty: 1 }], 'DRAFT', staffBar);
+    createOrder(barat, 'Dina', [{ sku: 'GELAS-008', qty: 2 }], 'FULFILLED', mgrBar);
+    await tx.order.createMany({ data: orderRows })
+    await tx.orderItem.createMany({ data: orderItemRows })
 
     const transferProduct = store.products.find(product => product.sku === 'KEMASAN-012')!
-    const demoTransfer = await tx.stockTransfer.create({ data: {
-      storeId: id, number: 'TRF-DEMO-001', fromBranchId: pusat.id, toBranchId: selatan.id, createdById: owner.id,
-      status: 'IN_TRANSIT', sentAt: now, note: 'Pengisian stok untuk akhir pekan',
-      items: { create: [{ productId: transferProduct.id, quantity: 20 }] }
+    const demoTransferId = randomUUID()
+    await tx.stockTransfer.create({ data: {
+      id: demoTransferId, storeId: id, number: 'TRF-DEMO-001', fromBranchId: pusat.id, toBranchId: selatan.id, createdById: owner.id,
+      status: 'IN_TRANSIT', sentAt: now, note: 'Pengisian stok untuk akhir pekan'
     } })
+    await tx.stockTransferItem.create({ data: { transferId: demoTransferId, productId: transferProduct.id, quantity: 20 } })
     const transferKey = inventoryKey(pusat.id, transferProduct.id)
     const transferBalance = (balances.get(transferKey) ?? 0) - 20
     balances.set(transferKey, transferBalance)
-    saleMovements.push({ storeId: id, branchId: pusat.id, productId: transferProduct.id, transferId: demoTransfer.id, userId: owner.id, type: 'TRANSFER_OUT', quantity: -20, balanceAfter: transferBalance, reason: 'Pengiriman transfer TRF-DEMO-001' })
-    orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'SEND', entity: 'TRANSFER', entityId: demoTransfer.id })
+    saleMovements.push({ storeId: id, branchId: pusat.id, productId: transferProduct.id, transferId: demoTransferId, userId: owner.id, type: 'TRANSFER_OUT', quantity: -20, balanceAfter: transferBalance, reason: 'Pengiriman transfer TRF-DEMO-001' })
+    orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'SEND', entity: 'TRANSFER', entityId: demoTransferId })
 
-    const [supplierCoffee, supplierPackaging] = await Promise.all([
-      tx.supplier.create({ data: { storeId: id, name: 'Nusantara Coffee Supply', contactName: 'Dewi Lestari', email: 'dewi@nusantara.demo', phone: '0812-0000-1001' } }),
-      tx.supplier.create({ data: { storeId: id, name: 'Prima Kemasan', contactName: 'Rudi Hartono', email: 'rudi@prima.demo', phone: '0812-0000-2002' } })
-    ])
+    const supplierCoffee = { id: randomUUID(), storeId: id, name: 'Nusantara Coffee Supply', contactName: 'Dewi Lestari', email: 'dewi@nusantara.demo', phone: '0812-0000-1001' }
+    const supplierPackaging = { id: randomUUID(), storeId: id, name: 'Prima Kemasan', contactName: 'Rudi Hartono', email: 'rudi@prima.demo', phone: '0812-0000-2002' }
+    await tx.supplier.createMany({ data: [supplierCoffee, supplierPackaging] })
     const mug = store.products.find(product => product.sku === 'MUG-003')!
     const glass = store.products.find(product => product.sku === 'GELAS-008')!
-    const demoPurchase = await tx.purchaseOrder.create({ data: {
-      storeId: id, branchId: pusat.id, supplierId: supplierCoffee.id, createdById: owner.id, number: 'PO-DEMO-001', status: 'ORDERED',
-      totalCost: 1_400_000, expectedAt: new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000), orderedAt: now, note: 'Restok peralatan untuk cabang pusat',
-      items: { create: [{ productId: mug.id, quantity: 10, unitCost: 90000 }, { productId: glass.id, quantity: 20, unitCost: 25000 }] }
+    const demoPurchaseId = randomUUID()
+    await tx.purchaseOrder.create({ data: {
+      id: demoPurchaseId, storeId: id, branchId: pusat.id, supplierId: supplierCoffee.id, createdById: owner.id, number: 'PO-DEMO-001', status: 'ORDERED',
+      totalCost: 1_400_000, expectedAt: new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000), orderedAt: now, note: 'Restok peralatan untuk cabang pusat'
     } })
-    orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'CREATE', entity: 'PURCHASE_ORDER', entityId: demoPurchase.id })
-    orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'ORDER', entity: 'PURCHASE_ORDER', entityId: demoPurchase.id })
+    await tx.purchaseOrderItem.createMany({ data: [
+      { purchaseOrderId: demoPurchaseId, productId: mug.id, quantity: 10, unitCost: 90000 },
+      { purchaseOrderId: demoPurchaseId, productId: glass.id, quantity: 20, unitCost: 25000 }
+    ] })
+    orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'CREATE', entity: 'PURCHASE_ORDER', entityId: demoPurchaseId })
+    orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'ORDER', entity: 'PURCHASE_ORDER', entityId: demoPurchaseId })
     orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'CREATE', entity: 'SUPPLIER', entityId: supplierCoffee.id })
     orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'CREATE', entity: 'SUPPLIER', entityId: supplierPackaging.id })
 
     for (const inventory of inventoryRows) inventory.stock = balances.get(inventoryKey(inventory.branchId, inventory.productId)) ?? inventory.stock
     await tx.branchInventory.createMany({ data: inventoryRows })
-    await tx.stockMovement.createMany({ data: movementRows })
-    await tx.stockMovement.createMany({ data: saleMovements })
+    await tx.stockMovement.createMany({ data: [...movementRows, ...saleMovements] })
     await tx.auditLog.createMany({ data: orderAudits })
 
     return { user, store }
