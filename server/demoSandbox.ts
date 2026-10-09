@@ -93,12 +93,8 @@ export async function createDemoSandbox(db: PrismaClient, role: Role, now = new 
         if (stock > 0) movementRows.push({ storeId: id, branchId: branch.id, productId: product.id, userId: owner.id, type: 'IN' as const, quantity: stock, balanceAfter: stock, reason: 'Stok awal demo' })
       }
     }
-    await tx.branchInventory.createMany({ data: inventoryRows })
-    await tx.stockMovement.createMany({ data: movementRows })
-
     const inventoryKey = (branchId: string, productId: string) => `${branchId}:${productId}`
     const balances = new Map(inventoryRows.map(row => [inventoryKey(row.branchId, row.productId), row.stock]))
-    const changedInventories = new Map<string, { branchId: string; productId: string; stock: number }>()
     const saleMovements: Prisma.StockMovementCreateManyInput[] = []
     const orderAudits: Prisma.AuditLogCreateManyInput[] = []
 
@@ -126,7 +122,6 @@ export async function createDemoSandbox(db: PrismaClient, role: Role, now = new 
           const key = inventoryKey(branch.id, p.id)
           const newStock = (balances.get(key) ?? 0) - i.qty
           balances.set(key, newStock)
-          changedInventories.set(key, { branchId: branch.id, productId: p.id, stock: newStock })
           saleMovements.push({
             storeId: id, branchId: branch.id, productId: p.id, orderId: order.id, userId: userObj.id,
             type: 'SALE', quantity: -i.qty, balanceAfter: newStock, reason: `Konfirmasi pesanan ${orderNum}`
@@ -160,7 +155,6 @@ export async function createDemoSandbox(db: PrismaClient, role: Role, now = new 
     const transferKey = inventoryKey(pusat.id, transferProduct.id)
     const transferBalance = (balances.get(transferKey) ?? 0) - 20
     balances.set(transferKey, transferBalance)
-    changedInventories.set(transferKey, { branchId: pusat.id, productId: transferProduct.id, stock: transferBalance })
     saleMovements.push({ storeId: id, branchId: pusat.id, productId: transferProduct.id, transferId: demoTransfer.id, userId: owner.id, type: 'TRANSFER_OUT', quantity: -20, balanceAfter: transferBalance, reason: 'Pengiriman transfer TRF-DEMO-001' })
     orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'SEND', entity: 'TRANSFER', entityId: demoTransfer.id })
 
@@ -180,9 +174,9 @@ export async function createDemoSandbox(db: PrismaClient, role: Role, now = new 
     orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'CREATE', entity: 'SUPPLIER', entityId: supplierCoffee.id })
     orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'CREATE', entity: 'SUPPLIER', entityId: supplierPackaging.id })
 
-    for (const inventory of changedInventories.values()) {
-      await tx.branchInventory.update({ where: { branchId_productId: { branchId: inventory.branchId, productId: inventory.productId } }, data: { stock: inventory.stock } })
-    }
+    for (const inventory of inventoryRows) inventory.stock = balances.get(inventoryKey(inventory.branchId, inventory.productId)) ?? inventory.stock
+    await tx.branchInventory.createMany({ data: inventoryRows })
+    await tx.stockMovement.createMany({ data: movementRows })
     await tx.stockMovement.createMany({ data: saleMovements })
     await tx.auditLog.createMany({ data: orderAudits })
 
