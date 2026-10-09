@@ -16,8 +16,8 @@ Buka [aplikasi Stokita](https://stokita-two.vercel.app), lalu pilih **Pemilik**,
 
 | Peran | Yang dapat dilakukan |
 | --- | --- |
-| Pemilik | Mengendalikan jaringan, cabang, katalog, harga, pengguna, laporan, dan seluruh tindakan operasional |
-| Manajer | Mengawasi satu cabang, mengelola pembelian, melihat laporan, mengoreksi dan mentransfer stok, membatalkan pesanan, serta memproses refund dan retur |
+| Pemilik | Mengendalikan jaringan, cabang, katalog, harga, pengguna, laporan, pemasok, serta menyetujui transfer dan pembelian |
+| Manajer | Mengawasi satu cabang, mengajukan dan memproses transfer atau pembelian yang disetujui, mengoreksi stok, serta menangani pembatalan, refund, dan retur |
 | Staf | Menangani pekerjaan harian berupa stok masuk, pesanan, pembayaran, dan penyelesaian transaksi |
 
 Untuk melihat perbedaan stok, masuk sebagai Pemilik, buka **Produk**, lalu ganti **Cabang aktif** pada menu samping. Untuk mencoba pembatasan akses, keluar dan pilih Manajer atau Staf.
@@ -27,9 +27,10 @@ Untuk melihat perbedaan stok, masuk sebagai Pemilik, buka **Produk**, lalu ganti
 - **Inventaris per cabang.** Setiap perubahan menyimpan jenis, jumlah, saldo sesudahnya, alasan, dan pelaku.
 - **Alur penjualan utuh.** Pesanan berjalan dari draft, konfirmasi stok, pembayaran, hingga selesai. Tunai, transfer, QRIS, dan kartu didukung.
 - **Refund terkendali.** Manajer atau pemilik dapat merefund transaksi yang sudah dibayar dan stok dikembalikan secara atomik.
-- **Transfer antar cabang.** Barang melewati tahap draft, dikirim, dan diterima. Saldo asal berkurang saat pengiriman dan saldo tujuan bertambah setelah penerimaan dikonfirmasi.
+- **Transfer dengan persetujuan.** Pengajuan manajer harus disetujui pemilik sebelum barang dikirim. Saldo asal berkurang saat pengiriman dan saldo tujuan bertambah setelah penerimaan dikonfirmasi.
 - **Retur setelah penjualan.** Manajer atau pemilik dapat menerima sebagian atau seluruh barang dari pesanan selesai. Stok, nilai retur, dan pendapatan bersih diperbarui dalam satu transaksi.
-- **Pembelian dan pemasok.** Pemilik mengelola pemasok. Pemilik dan manajer membuat purchase order dari saran restok, mengirimkannya ke pemasok, lalu menerima barang langsung ke stok cabang dengan jejak pergerakan.
+- **Pembelian dan pemasok.** Pemilik mengelola pemasok dan menyetujui purchase order yang diajukan manajer. Setelah disetujui, PO dapat dipesan dan diterima langsung ke stok cabang dengan jejak pergerakan.
+- **Pemisahan tugas.** Dokumen menyimpan pembuat, penyetuju, penerima, dan waktunya. Tindakan darurat pemilik langsung berstatus disetujui dan tetap masuk audit.
 - **Akses sesuai peran.** Cabang dan peran ditentukan dari sesi pengguna di server. Permintaan tidak dapat memilih cabang lain melalui ID yang dikirim browser.
 - **Ringkasan pusat.** Pemilik melihat pendapatan yang sudah dibayar, transaksi, tim, dan kondisi setiap cabang.
 - **Excel pusat dan cabang.** Manajer dapat mengunduh laporan cabangnya. Pemilik juga dapat mengunduh laporan seluruh jaringan. Status pembayaran dan metode pembayaran tercantum di dalamnya.
@@ -73,6 +74,8 @@ Migrasi `20261008190000_transfers_returns` menambahkan transfer stok, retur penj
 
 Migrasi `20261009140000_purchasing` menambahkan pemasok, purchase order, item pembelian, status penerimaan, dan hubungan penerimaan barang dengan pergerakan stok. Data lama tidak berubah.
 
+Migrasi `20261009180000_approval_workflow` menambahkan tahap menunggu persetujuan dan disetujui pada transfer serta purchase order. Dokumen lama tetap dipertahankan dan dapat disetujui melalui alur baru.
+
 Sebelum migrasi produksi, buat snapshot database. Jalankan `npm run db:deploy` dengan `DIRECT_URL` produksi, lalu terbitkan aplikasi versi baru. Migrasi harus selesai sebelum API baru menerima permintaan. Jalankan pengujian pada salinan database terlebih dahulu.
 
 ## Aturan data dan akses
@@ -85,8 +88,8 @@ Sebelum migrasi produksi, buat snapshot database. Jalankan `npm run db:deploy` d
 - Pendapatan menghitung nilai bersih pesanan `PAID` dan `PARTIALLY_REFUNDED`. Transaksi `UNPAID` dan nilai yang sudah diretur tidak masuk pendapatan.
 - Pesanan selesai dapat memiliki beberapa retur selama jumlah total setiap produk tidak melebihi jumlah yang dijual. Pendapatan dikurangi berdasarkan nilai barang yang sudah diretur.
 - Staf dapat mencatat stok masuk. Koreksi stok hanya tersedia untuk manajer dan pemilik.
-- Transfer stok hanya dikelola manajer dan pemilik. Pengiriman harus dilakukan dari cabang asal dan penerimaan harus dikonfirmasi dari cabang tujuan.
-- Pemasok dikelola pemilik. Purchase order dapat dibuat dan diproses pemilik atau manajer untuk cabang aktif. Stok hanya bertambah sekali ketika seluruh barang dikonfirmasi diterima.
+- Transfer yang dibuat manajer berstatus menunggu persetujuan. Pemilik menyetujui, cabang asal mengirim, dan cabang tujuan menerima. Transfer darurat yang dibuat pemilik langsung disetujui dan dicatat dalam audit.
+- Pemasok dikelola pemilik. Purchase order yang dibuat manajer harus disetujui pemilik sebelum dikirim ke pemasok. PO darurat pemilik langsung disetujui. Stok hanya bertambah sekali ketika seluruh barang diterima.
 - Data perusahaan lain tetap terpisah. Setiap akses produk, cabang, stok, dan pesanan diperiksa terhadap perusahaan dari sesi.
 
 ## API
@@ -103,11 +106,11 @@ Semua endpoint memakai awalan `/api`. Selain login, demo, dan health, endpoint m
 | GET, POST, PATCH | `/products`, `/products/:id` | Katalog bersama, perubahan khusus pemilik |
 | GET, POST | `/stock-movements` | Riwayat dan perubahan stok cabang |
 | GET, POST | `/transfers` | Daftar dan draft transfer stok |
-| POST | `/transfers/:id/send`, `/transfers/:id/receive`, `/transfers/:id/cancel` | Pengiriman, penerimaan, dan pembatalan transfer |
+| POST | `/transfers/:id/approve`, `/transfers/:id/send`, `/transfers/:id/receive`, `/transfers/:id/cancel` | Persetujuan, pengiriman, penerimaan, dan pembatalan transfer |
 | GET, POST, PATCH | `/suppliers`, `/suppliers/:id` | Daftar dan pengelolaan pemasok |
 | GET | `/purchase-options` | Pemasok aktif dan rekomendasi restok cabang |
 | GET, POST | `/purchase-orders` | Daftar dan draft purchase order |
-| POST | `/purchase-orders/:id/order`, `/purchase-orders/:id/receive`, `/purchase-orders/:id/cancel` | Pemesanan, penerimaan, dan pembatalan pembelian |
+| POST | `/purchase-orders/:id/approve`, `/purchase-orders/:id/order`, `/purchase-orders/:id/receive`, `/purchase-orders/:id/cancel` | Persetujuan, pemesanan, penerimaan, dan pembatalan pembelian |
 | GET, POST | `/orders` | Daftar dan buat pesanan cabang |
 | POST | `/orders/:id/confirm`, `/orders/:id/cancel`, `/orders/:id/fulfill` | Konfirmasi, pembatalan, dan penyelesaian pesanan |
 | POST | `/orders/:id/pay`, `/orders/:id/refund` | Pencatatan pembayaran dan refund |

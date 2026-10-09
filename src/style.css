@@ -55,7 +55,10 @@
 .transfer-items { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .85rem; }
 .transfer-items span { background: #f2f6f8; color: #526b7d; border-radius: 6px; padding: .32rem .5rem; font-size: .74rem; }
 .transfer-note { color: #718395; font-size: .78rem; margin: .8rem 0 0; }
+.approval-note { display: flex; align-items: center; gap: .35rem; color: #16805e; font-size: .76rem; font-weight: 700; margin: .7rem 0 0; }
 .badge.transfer-draft { background: #eff3f6; color: #65778a; }
+.badge.transfer-pending_approval { background: #fff3dc; color: #99671d; }
+.badge.transfer-approved { background: #e7f3ff; color: #176e9b; }
 .badge.transfer-in_transit { background: #fff3dc; color: #99671d; }
 .badge.transfer-received { background: #e4f7ef; color: #13845e; }
 .badge.transfer-cancelled { background: #fff0ee; color: #b75847; }
@@ -86,6 +89,8 @@
 .purchase-card > small { display: block; color: #8b9aa8; font-size: .74rem; margin-top: .55rem; }
 .purchase-note { color: #6f8192; font-size: .78rem; margin: .55rem 0 0; }
 .badge.purchase-draft { background: #eff3f6; color: #65778a; }
+.badge.purchase-pending_approval { background: #fff3dc; color: #99671d; }
+.badge.purchase-approved { background: #e7f3ff; color: #176e9b; }
 .badge.purchase-ordered { background: #fff3dc; color: #99671d; }
 .badge.purchase-received { background: #e4f7ef; color: #13845e; }
 .badge.purchase-cancelled { background: #fff0ee; color: #b75847; }

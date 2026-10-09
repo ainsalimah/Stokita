@@ -30,6 +30,8 @@ enum PaymentStatus {
 
 enum TransferStatus {
   DRAFT
+  PENDING_APPROVAL
+  APPROVED
   IN_TRANSIT
   RECEIVED
   CANCELLED
@@ -37,6 +39,8 @@ enum TransferStatus {
 
 enum PurchaseOrderStatus {
   DRAFT
+  PENDING_APPROVAL
+  APPROVED
   ORDERED
   RECEIVED
   CANCELLED
@@ -131,8 +135,10 @@ model User {
   movements StockMovement[]
   auditLogs AuditLog[]
   createdTransfers StockTransfer[] @relation("TransferCreatedBy")
+  approvedTransfers StockTransfer[] @relation("TransferApprovedBy")
   receivedTransfers StockTransfer[] @relation("TransferReceivedBy")
   createdPurchaseOrders PurchaseOrder[] @relation("PurchaseCreatedBy")
+  approvedPurchaseOrders PurchaseOrder[] @relation("PurchaseApprovedBy")
   receivedPurchaseOrders PurchaseOrder[] @relation("PurchaseReceivedBy")
   returns SalesReturn[]
   @@index([storeId])
@@ -265,6 +271,8 @@ model PurchaseOrder {
   supplier Supplier @relation(fields: [supplierId], references: [id])
   createdById String
   createdBy User @relation("PurchaseCreatedBy", fields: [createdById], references: [id])
+  approvedById String?
+  approvedBy User? @relation("PurchaseApprovedBy", fields: [approvedById], references: [id])
   receivedById String?
   receivedBy User? @relation("PurchaseReceivedBy", fields: [receivedById], references: [id])
   number String
@@ -273,6 +281,7 @@ model PurchaseOrder {
   expectedAt DateTime?
   note String?
   createdAt DateTime @default(now())
+  approvedAt DateTime?
   orderedAt DateTime?
   receivedAt DateTime?
   items PurchaseOrderItem[]
@@ -281,6 +290,7 @@ model PurchaseOrder {
   @@index([storeId, createdAt])
   @@index([branchId, status, createdAt])
   @@index([supplierId, createdAt])
+  @@index([approvedById])
 }
 
 model PurchaseOrderItem {
@@ -305,11 +315,14 @@ model StockTransfer {
   toBranch Branch @relation("TransferTo", fields: [toBranchId], references: [id])
   createdById String
   createdBy User @relation("TransferCreatedBy", fields: [createdById], references: [id])
+  approvedById String?
+  approvedBy User? @relation("TransferApprovedBy", fields: [approvedById], references: [id])
   receivedById String?
   receivedBy User? @relation("TransferReceivedBy", fields: [receivedById], references: [id])
   status TransferStatus @default(DRAFT)
   note String?
   createdAt DateTime @default(now())
+  approvedAt DateTime?
   sentAt DateTime?
   receivedAt DateTime?
   items StockTransferItem[]
@@ -318,6 +331,7 @@ model StockTransfer {
   @@index([storeId, createdAt])
   @@index([fromBranchId, status, createdAt])
   @@index([toBranchId, status, createdAt])
+  @@index([approvedById])
 }
 
 model StockTransferItem {

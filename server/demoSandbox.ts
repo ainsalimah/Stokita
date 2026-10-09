@@ -153,16 +153,17 @@ export async function createDemoSandbox(db: PrismaClient, role: Role, now = new 
 
     const transferProduct = store.products.find(product => product.sku === 'KEMASAN-012')!
     const demoTransferId = randomUUID()
+    const transferFrom = role === 'MANAGER' ? selatan : pusat
+    const transferTo = role === 'MANAGER' ? barat : selatan
+    const transferCreator = role === 'OWNER' ? mgrPst : role === 'MANAGER' ? mgrSel : owner
+    const transferStatus = role === 'OWNER' ? 'PENDING_APPROVAL' as const : 'APPROVED' as const
     await tx.stockTransfer.create({ data: {
-      id: demoTransferId, storeId: id, number: 'TRF-DEMO-001', fromBranchId: pusat.id, toBranchId: selatan.id, createdById: owner.id,
-      status: 'IN_TRANSIT', sentAt: now, note: 'Pengisian stok untuk akhir pekan'
+      id: demoTransferId, storeId: id, number: 'TRF-DEMO-001', fromBranchId: transferFrom.id, toBranchId: transferTo.id, createdById: transferCreator.id,
+      ...(transferStatus === 'APPROVED' ? { approvedById: owner.id, approvedAt: now } : {}), status: transferStatus, note: 'Pengisian stok untuk akhir pekan'
     } })
     await tx.stockTransferItem.create({ data: { transferId: demoTransferId, productId: transferProduct.id, quantity: 20 } })
-    const transferKey = inventoryKey(pusat.id, transferProduct.id)
-    const transferBalance = (balances.get(transferKey) ?? 0) - 20
-    balances.set(transferKey, transferBalance)
-    saleMovements.push({ storeId: id, branchId: pusat.id, productId: transferProduct.id, transferId: demoTransferId, userId: owner.id, type: 'TRANSFER_OUT', quantity: -20, balanceAfter: transferBalance, reason: 'Pengiriman transfer TRF-DEMO-001' })
-    orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'SEND', entity: 'TRANSFER', entityId: demoTransferId })
+    orderAudits.push({ storeId: id, branchId: transferFrom.id, userId: transferCreator.id, action: 'CREATE', entity: 'TRANSFER', entityId: demoTransferId })
+    if (transferStatus === 'APPROVED') orderAudits.push({ storeId: id, branchId: transferFrom.id, userId: owner.id, action: 'APPROVE', entity: 'TRANSFER', entityId: demoTransferId })
 
     const supplierCoffee = { id: randomUUID(), storeId: id, name: 'Nusantara Coffee Supply', contactName: 'Dewi Lestari', email: 'dewi@nusantara.demo', phone: '0812-0000-1001' }
     const supplierPackaging = { id: randomUUID(), storeId: id, name: 'Prima Kemasan', contactName: 'Rudi Hartono', email: 'rudi@prima.demo', phone: '0812-0000-2002' }
@@ -170,16 +171,19 @@ export async function createDemoSandbox(db: PrismaClient, role: Role, now = new 
     const mug = store.products.find(product => product.sku === 'MUG-003')!
     const glass = store.products.find(product => product.sku === 'GELAS-008')!
     const demoPurchaseId = randomUUID()
+    const purchaseBranch = role === 'MANAGER' ? selatan : pusat
+    const purchaseCreator = role === 'OWNER' ? mgrPst : role === 'MANAGER' ? mgrSel : owner
+    const purchaseStatus = role === 'OWNER' ? 'PENDING_APPROVAL' as const : 'APPROVED' as const
     await tx.purchaseOrder.create({ data: {
-      id: demoPurchaseId, storeId: id, branchId: pusat.id, supplierId: supplierCoffee.id, createdById: owner.id, number: 'PO-DEMO-001', status: 'ORDERED',
-      totalCost: 1_400_000, expectedAt: new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000), orderedAt: now, note: 'Restok peralatan untuk cabang pusat'
+      id: demoPurchaseId, storeId: id, branchId: purchaseBranch.id, supplierId: supplierCoffee.id, createdById: purchaseCreator.id, number: 'PO-DEMO-001', status: purchaseStatus,
+      ...(purchaseStatus === 'APPROVED' ? { approvedById: owner.id, approvedAt: now } : {}), totalCost: 1_400_000, expectedAt: new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000), note: 'Restok peralatan untuk cabang aktif'
     } })
     await tx.purchaseOrderItem.createMany({ data: [
       { purchaseOrderId: demoPurchaseId, productId: mug.id, quantity: 10, unitCost: 90000 },
       { purchaseOrderId: demoPurchaseId, productId: glass.id, quantity: 20, unitCost: 25000 }
     ] })
-    orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'CREATE', entity: 'PURCHASE_ORDER', entityId: demoPurchaseId })
-    orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'ORDER', entity: 'PURCHASE_ORDER', entityId: demoPurchaseId })
+    orderAudits.push({ storeId: id, branchId: purchaseBranch.id, userId: purchaseCreator.id, action: 'CREATE', entity: 'PURCHASE_ORDER', entityId: demoPurchaseId })
+    if (purchaseStatus === 'APPROVED') orderAudits.push({ storeId: id, branchId: purchaseBranch.id, userId: owner.id, action: 'APPROVE', entity: 'PURCHASE_ORDER', entityId: demoPurchaseId })
     orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'CREATE', entity: 'SUPPLIER', entityId: supplierCoffee.id })
     orderAudits.push({ storeId: id, branchId: pusat.id, userId: owner.id, action: 'CREATE', entity: 'SUPPLIER', entityId: supplierPackaging.id })
 

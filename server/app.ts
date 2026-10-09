@@ -250,6 +250,7 @@ const transferInclude = {
   fromBranch: { select: { id: true, name: true, code: true } },
   toBranch: { select: { id: true, name: true, code: true } },
   createdBy: { select: { name: true } },
+  approvedBy: { select: { name: true } },
   receivedBy: { select: { name: true } },
   items: { include: { product: { select: { name: true, sku: true } } } }
 } as const
@@ -291,21 +292,25 @@ app.post('/api/transfers', requireRole('OWNER', 'MANAGER'), async (req, res) => 
     const created = await tx.stockTransfer.create({ data: {
       storeId: me.storeId, number: `TRF-${Date.now().toString(36).toUpperCase()}-${randomBytes(3).toString('hex').toUpperCase()}`,
       fromBranchId: me.branchId, toBranchId: destination.id, createdById: me.id, note: body.note || null,
+      status: me.role === 'OWNER' ? 'APPROVED' : 'PENDING_APPROVAL',
+      ...(me.role === 'OWNER' ? { approvedById: me.id, approvedAt: new Date() } : {}),
       items: { create: body.items }
     }, include: transferInclude })
     await audit(tx, me, 'CREATE', 'TRANSFER', created.id)
+    if (me.role === 'OWNER') await audit(tx, me, 'APPROVE', 'TRANSFER', created.id)
     return created
   })
   res.status(201).json(transfer)
 })
 
-async function changeTransfer(req: Request, res: Response, action: 'send' | 'receive' | 'cancel') {
+async function changeTransfer(req: Request, res: Response, action: 'approve' | 'send' | 'receive' | 'cancel') {
   const me = identity(req)
   const id = String(req.params.id)
   const transfer = await db.$transaction(async tx => {
     const current = await tx.stockTransfer.findFirst({ where: { id, storeId: me.storeId }, include: { items: true } })
     if (!current) throw new ApiError(404, 'Transfer stok tidak ditemukan.')
-    if (action === 'receive' ? current.toBranchId !== me.branchId : current.fromBranchId !== me.branchId) throw new ApiError(403, 'Pilih cabang yang sesuai untuk tindakan ini.')
+    if (action === 'approve' && me.role !== 'OWNER') throw new ApiError(403, 'Persetujuan transfer hanya dapat dilakukan pemilik.')
+    if (action !== 'approve' && (action === 'receive' ? current.toBranchId !== me.branchId : current.fromBranchId !== me.branchId)) throw new ApiError(403, 'Pilih cabang yang sesuai untuk tindakan ini.')
     const transition = transferTransition(current.status, action)
     if (transition === 'repeat') return tx.stockTransfer.findUniqueOrThrow({ where: { id }, include: transferInclude })
     if (transition === 'invalid') throw new ApiError(409, 'Status transfer tidak mengizinkan tindakan ini.')
@@ -324,8 +329,8 @@ async function changeTransfer(req: Request, res: Response, action: 'send' | 'rec
         await tx.stockMovement.create({ data: { storeId: me.storeId, branchId: current.toBranchId, productId: item.productId, transferId: id, userId: me.id, type: 'TRANSFER_IN', quantity: item.quantity, balanceAfter: inventory.stock, reason: `Penerimaan transfer ${current.number}` } })
       }
     }
-    const nextStatus = action === 'send' ? 'IN_TRANSIT' : action === 'receive' ? 'RECEIVED' : 'CANCELLED'
-    const changed = await tx.stockTransfer.updateMany({ where: { id, status: current.status }, data: { status: nextStatus, ...(action === 'send' ? { sentAt: new Date() } : {}), ...(action === 'receive' ? { receivedAt: new Date(), receivedById: me.id } : {}) } })
+    const nextStatus = action === 'approve' ? 'APPROVED' : action === 'send' ? 'IN_TRANSIT' : action === 'receive' ? 'RECEIVED' : 'CANCELLED'
+    const changed = await tx.stockTransfer.updateMany({ where: { id, status: current.status }, data: { status: nextStatus, ...(action === 'approve' ? { approvedAt: new Date(), approvedById: me.id } : {}), ...(action === 'send' ? { sentAt: new Date() } : {}), ...(action === 'receive' ? { receivedAt: new Date(), receivedById: me.id } : {}) } })
     if (changed.count !== 1) throw new ApiError(409, 'Transfer sudah berubah. Muat ulang halaman.')
     await audit(tx, me, action.toUpperCase(), 'TRANSFER', id)
     return tx.stockTransfer.findUniqueOrThrow({ where: { id }, include: transferInclude })
@@ -336,11 +341,13 @@ async function changeTransfer(req: Request, res: Response, action: 'send' | 'rec
 app.post('/api/transfers/:id/send', requireRole('OWNER', 'MANAGER'), (req, res) => changeTransfer(req, res, 'send'))
 app.post('/api/transfers/:id/receive', requireRole('OWNER', 'MANAGER'), (req, res) => changeTransfer(req, res, 'receive'))
 app.post('/api/transfers/:id/cancel', requireRole('OWNER', 'MANAGER'), (req, res) => changeTransfer(req, res, 'cancel'))
+app.post('/api/transfers/:id/approve', requireRole('OWNER'), (req, res) => changeTransfer(req, res, 'approve'))
 
 const purchaseInclude = {
   branch: { select: { id: true, name: true, code: true } },
   supplier: { select: { id: true, name: true, contactName: true, phone: true } },
   createdBy: { select: { name: true } },
+  approvedBy: { select: { name: true } },
   receivedBy: { select: { name: true } },
   items: { include: { product: { select: { name: true, sku: true } } } }
 } as const
@@ -397,7 +404,7 @@ app.get('/api/purchase-options', requireRole('OWNER', 'MANAGER'), async (req, re
 app.get('/api/purchase-orders', requireRole('OWNER', 'MANAGER'), async (req, res) => {
   const me = identity(req)
   const { page, limit } = parse(pageSchema, req.query)
-  const where: Prisma.PurchaseOrderWhereInput = { storeId: me.storeId, branchId: me.branchId }
+  const where: Prisma.PurchaseOrderWhereInput = { storeId: me.storeId, ...(me.role === 'OWNER' ? {} : { branchId: me.branchId }) }
   const [items, total] = await db.$transaction([
     db.purchaseOrder.findMany({ where, include: purchaseInclude, orderBy: { createdAt: 'desc' }, skip: (page - 1) * limit, take: limit }),
     db.purchaseOrder.count({ where })
@@ -425,26 +432,30 @@ app.post('/api/purchase-orders', requireRole('OWNER', 'MANAGER'), async (req, re
     const created = await tx.purchaseOrder.create({ data: {
       storeId: me.storeId, branchId: me.branchId, supplierId: supplier.id, createdById: me.id,
       number: `PO-${Date.now().toString(36).toUpperCase()}-${randomBytes(3).toString('hex').toUpperCase()}`,
+      status: me.role === 'OWNER' ? 'APPROVED' : 'PENDING_APPROVAL',
+      ...(me.role === 'OWNER' ? { approvedById: me.id, approvedAt: new Date() } : {}),
       totalCost, expectedAt: body.expectedAt ? new Date(`${body.expectedAt}T12:00:00.000Z`) : null, note: body.note || null,
       items: { create: body.items }
     }, include: purchaseInclude })
     await audit(tx, me, 'CREATE', 'PURCHASE_ORDER', created.id)
+    if (me.role === 'OWNER') await audit(tx, me, 'APPROVE', 'PURCHASE_ORDER', created.id)
     return created
   })
   res.status(201).json(purchaseOrder)
 })
 
-async function changePurchaseOrder(req: Request, res: Response, action: 'order' | 'receive' | 'cancel') {
+async function changePurchaseOrder(req: Request, res: Response, action: 'approve' | 'order' | 'receive' | 'cancel') {
   const me = identity(req)
   const id = String(req.params.id)
   const purchaseOrder = await db.$transaction(async tx => {
-    const current = await tx.purchaseOrder.findFirst({ where: { id, storeId: me.storeId, branchId: me.branchId }, include: { items: true } })
-    if (!current) throw new ApiError(404, 'Purchase order tidak ditemukan pada cabang aktif.')
+    const current = await tx.purchaseOrder.findFirst({ where: { id, storeId: me.storeId, ...(action === 'approve' && me.role === 'OWNER' ? {} : { branchId: me.branchId }) }, include: { items: true } })
+    if (!current) throw new ApiError(404, 'Purchase order tidak ditemukan atau cabang aktif tidak sesuai.')
+    if (action === 'approve' && me.role !== 'OWNER') throw new ApiError(403, 'Persetujuan purchase order hanya dapat dilakukan pemilik.')
     const transition = purchaseTransition(current.status, action)
     if (transition === 'repeat') return tx.purchaseOrder.findUniqueOrThrow({ where: { id }, include: purchaseInclude })
     if (transition === 'invalid') throw new ApiError(409, 'Status purchase order tidak mengizinkan tindakan ini.')
-    const nextStatus = action === 'order' ? 'ORDERED' : action === 'receive' ? 'RECEIVED' : 'CANCELLED'
-    const changed = await tx.purchaseOrder.updateMany({ where: { id, status: current.status }, data: { status: nextStatus, ...(action === 'order' ? { orderedAt: new Date() } : {}), ...(action === 'receive' ? { receivedAt: new Date(), receivedById: me.id } : {}) } })
+    const nextStatus = action === 'approve' ? 'APPROVED' : action === 'order' ? 'ORDERED' : action === 'receive' ? 'RECEIVED' : 'CANCELLED'
+    const changed = await tx.purchaseOrder.updateMany({ where: { id, status: current.status }, data: { status: nextStatus, ...(action === 'approve' ? { approvedAt: new Date(), approvedById: me.id } : {}), ...(action === 'order' ? { orderedAt: new Date() } : {}), ...(action === 'receive' ? { receivedAt: new Date(), receivedById: me.id } : {}) } })
     if (changed.count !== 1) throw new ApiError(409, 'Purchase order sudah berubah. Muat ulang halaman.')
     if (action === 'receive') {
       for (const item of [...current.items].sort((a, b) => a.productId.localeCompare(b.productId))) {
@@ -461,6 +472,7 @@ async function changePurchaseOrder(req: Request, res: Response, action: 'order' 
 app.post('/api/purchase-orders/:id/order', requireRole('OWNER', 'MANAGER'), (req, res) => changePurchaseOrder(req, res, 'order'))
 app.post('/api/purchase-orders/:id/receive', requireRole('OWNER', 'MANAGER'), (req, res) => changePurchaseOrder(req, res, 'receive'))
 app.post('/api/purchase-orders/:id/cancel', requireRole('OWNER', 'MANAGER'), (req, res) => changePurchaseOrder(req, res, 'cancel'))
+app.post('/api/purchase-orders/:id/approve', requireRole('OWNER'), (req, res) => changePurchaseOrder(req, res, 'approve'))
 
 app.get('/api/orders', async (req, res) => {
   const me = identity(req)
@@ -640,9 +652,11 @@ app.get('/api/dashboard', async (req, res) => {
     ORDER BY stock ASC, p.name ASC LIMIT 5
   `
   if (me.role === 'OWNER') {
-    const [products, activeUsers, recent, branches] = await Promise.all([
+    const [products, activeUsers, pendingTransfers, pendingPurchases, recent, branches] = await Promise.all([
       db.product.count({ where: { storeId, active: true } }),
       db.user.count({ where: { storeId, active: true } }),
+      db.stockTransfer.count({ where: { storeId, status: { in: ['DRAFT', 'PENDING_APPROVAL'] } } }),
+      db.purchaseOrder.count({ where: { storeId, status: { in: ['DRAFT', 'PENDING_APPROVAL'] } } }),
       db.auditLog.findMany({ where: { storeId }, include: { user: { select: { name: true } }, branch: { select: { name: true } } }, orderBy: { createdAt: 'desc' }, take: 6 }),
       db.$queryRaw<Array<{ id: string; name: string; code: string; active: boolean; orders: bigint; confirmed: bigint; revenue: bigint; lowStock: bigint }>>`
         SELECT b.id, b.name, b.code, b.active,
@@ -666,7 +680,7 @@ app.get('/api/dashboard', async (req, res) => {
         ORDER BY b."createdAt" ASC
       `
     ])
-    return res.json({ role: me.role, products, lowStock: branches.reduce((sum, row) => sum + Number(row.lowStock), 0), orders: branches.reduce((sum, row) => sum + Number(row.orders), 0), confirmed: branches.reduce((sum, row) => sum + Number(row.confirmed), 0), revenue: branches.reduce((sum, row) => sum + Number(row.revenue), 0), activeUsers, recent,
+    return res.json({ role: me.role, products, lowStock: branches.reduce((sum, row) => sum + Number(row.lowStock), 0), orders: branches.reduce((sum, row) => sum + Number(row.orders), 0), confirmed: branches.reduce((sum, row) => sum + Number(row.confirmed), 0), revenue: branches.reduce((sum, row) => sum + Number(row.revenue), 0), activeUsers, pendingTransfers, pendingPurchases, recent,
       branchCount: branches.filter(branch => branch.active).length,
       branches: branches.map(branch => ({ id: branch.id, name: branch.name, code: branch.code, active: branch.active, revenue: Number(branch.revenue), lowStock: Number(branch.lowStock) })) })
   }
