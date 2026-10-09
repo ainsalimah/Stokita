@@ -240,7 +240,7 @@ app.post('/api/stock-movements', async (req, res) => {
     const result = await tx.stockMovement.create({ data: { storeId: me.storeId, branchId: me.branchId, productId: product.id, userId: me.id, type: body.type, quantity: body.quantity, balanceAfter: after.stock, reason: body.reason } })
     await audit(tx, me, body.type, 'PRODUCT', product.id)
     return result
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 20_000 })
   res.status(201).json(movement)
 })
 
@@ -327,7 +327,7 @@ async function changeTransfer(req: Request, res: Response, action: 'send' | 'rec
     if (changed.count !== 1) throw new ApiError(409, 'Transfer sudah berubah. Muat ulang halaman.')
     await audit(tx, me, action.toUpperCase(), 'TRANSFER', id)
     return tx.stockTransfer.findUniqueOrThrow({ where: { id }, include: transferInclude })
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 20_000 })
   res.json(transfer)
 }
 
@@ -390,7 +390,7 @@ async function changeOrder(req: Request, res: Response, action: 'confirm' | 'can
     }
     await audit(tx, me, action.toUpperCase(), 'ORDER', id)
     return tx.order.findUniqueOrThrow({ where: { id }, include: { items: true } })
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 20_000 })
   res.json(order)
 }
 app.post('/api/orders/:id/confirm', (req, res) => changeOrder(req, res, 'confirm'))
@@ -414,7 +414,7 @@ app.post('/api/orders/:id/pay', async (req, res) => {
     if (changed.count !== 1) throw new ApiError(409, 'Pembayaran sudah berubah. Muat ulang halaman.')
     await audit(tx, me, 'PAY', 'ORDER', id)
     return tx.order.findUniqueOrThrow({ where: { id }, include: { items: { include: { product: { select: { name: true, sku: true } } } } } })
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 20_000 })
   res.json(order)
 })
 
@@ -441,7 +441,7 @@ app.post('/api/orders/:id/refund', requireRole('OWNER', 'MANAGER'), async (req, 
     }
     await audit(tx, me, 'REFUND', 'ORDER', id)
     return tx.order.findUniqueOrThrow({ where: { id }, include: { items: { include: { product: { select: { name: true, sku: true } } } } } })
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 20_000 })
   res.json(order)
 })
 
@@ -483,7 +483,7 @@ app.post('/api/orders/:id/returns', requireRole('OWNER', 'MANAGER'), async (req,
     await tx.order.update({ where: { id: order.id }, data: { refundedTotal, paymentStatus: fullyRefunded ? 'REFUNDED' : 'PARTIALLY_REFUNDED', refundedAt: new Date() } })
     await audit(tx, me, 'RETURN', 'ORDER', order.id)
     return tx.salesReturn.findUniqueOrThrow({ where: { id: salesReturn.id }, include: { items: { include: { product: { select: { name: true, sku: true } } } } } })
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 20_000 })
   res.status(201).json(result)
 })
 
@@ -587,6 +587,7 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === 'P2002') return res.status(409).json({ error: 'Data dengan nilai tersebut sudah ada.' })
     if (error.code === 'P2034') return res.status(409).json({ error: 'Data sedang berubah. Silakan coba lagi.' })
+    if (error.code === 'P2028') return res.status(503).json({ error: 'Database masih menyiapkan transaksi. Silakan coba lagi.' })
   }
   console.error(error)
   res.status(500).json({ error: 'Terjadi kesalahan server.' })
