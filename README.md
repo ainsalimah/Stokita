@@ -12,7 +12,7 @@ Pemilik dapat melihat ringkasan seluruh jaringan, memilih cabang aktif untuk pek
 
 ## Coba demo
 
-Buka [aplikasi Stokita](https://stokita-two.vercel.app), lalu pilih **Pemilik**, **Manajer**, atau **Staf**. Setiap klik membuat perusahaan demo pribadi selama 24 jam dengan tiga cabang, 12 produk, stok yang berbeda, serta transaksi dalam beberapa tahap. Setelah masuk, pemilih akun demo di sidebar dapat digunakan untuk mencoba Alya sebagai pemilik serta manajer dan staf dari ketiga cabang tanpa membuat ruang baru. Tidak diperlukan email atau kata sandi. Data setiap pengunjung terpisah.
+Buka [aplikasi Stokita](https://stokita-two.vercel.app), lalu pilih **Pemilik**, **Manajer**, atau **Staf**. Setiap klik membuat perusahaan demo pribadi selama 24 jam dengan tiga cabang, 12 produk, stok yang berbeda, serta transaksi dalam beberapa tahap. Demo Pemilik langsung memakai akun Alya tanpa pemilih akun. Pada demo Manajer dan Staf, pemilih akun di sidebar menyediakan tiga manajer dan tiga staf dari seluruh cabang tanpa membuat ruang baru. Tidak diperlukan email atau kata sandi. Data setiap pengunjung terpisah.
 
 | Peran | Yang dapat dilakukan |
 | --- | --- |
@@ -100,7 +100,7 @@ Semua endpoint memakai awalan `/api`. Selain login, demo, dan health, endpoint m
 | --- | --- | --- |
 | POST | `/auth/login`, `/auth/demo`, `/auth/logout` | Masuk, mulai demo, dan keluar |
 | GET | `/auth/me` | Akun dan cabang aktif |
-| GET, POST | `/auth/demo-users`, `/auth/demo-switch` | Daftar dan pergantian akun khusus ruang demo |
+| GET, POST | `/auth/demo-users`, `/auth/demo-switch` | Daftar dan pergantian akun manajer/staf khusus ruang demo |
 | PATCH | `/auth/active-branch` | Pemilik memilih cabang aktif |
 | GET, POST, PATCH | `/branches`, `/branches/:id` | Daftar, tambah, dan ubah cabang |
 | GET, POST, PATCH | `/users`, `/users/:id` | Kelola pengguna dan penempatan cabang |

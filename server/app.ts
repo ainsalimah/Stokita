@@ -96,21 +96,18 @@ app.use('/api', async (req: AuthedRequest, _res, next) => {
 app.get('/api/auth/me', (req, res) => { const me = identity(req); res.setHeader('Cache-Control', 'no-store'); res.json({ user: { id: me.id, name: me.name, email: me.email, role: me.role }, store: { id: me.storeId, name: me.storeName, isDemo: me.isDemo }, activeBranch: { id: me.branchId, name: me.branchName } }) })
 app.get('/api/auth/demo-users', async (req, res) => {
   const me = identity(req)
-  if (!me.isDemo) throw new ApiError(403, 'Pergantian akun hanya tersedia di ruang demo.')
-  const users = await db.user.findMany({ where: { storeId: me.storeId, active: true }, include: { branch: { select: { name: true } } } })
-  const roleOrder: Record<Role, number> = { OWNER: 0, MANAGER: 1, STAFF: 2 }
-  users.sort((a, b) => roleOrder[a.role] - roleOrder[b.role] || (a.branch?.name || '').localeCompare(b.branch?.name || '') || a.name.localeCompare(b.name))
+  if (!me.isDemo || me.role === 'OWNER') throw new ApiError(403, 'Pergantian akun demo hanya tersedia untuk manajer dan staf.')
+  const users = await db.user.findMany({ where: { storeId: me.storeId, active: true, role: { in: ['MANAGER', 'STAFF'] } }, include: { branch: { select: { name: true } } } })
+  users.sort((a, b) => (a.role === b.role ? 0 : a.role === 'MANAGER' ? -1 : 1) || (a.branch?.name || '').localeCompare(b.branch?.name || '') || a.name.localeCompare(b.name))
   res.json(users.map(publicUser))
 })
 app.post('/api/auth/demo-switch', async (req: AuthedRequest, res) => {
   const me = identity(req)
-  if (!me.isDemo) throw new ApiError(403, 'Pergantian akun hanya tersedia di ruang demo.')
+  if (!me.isDemo || me.role === 'OWNER') throw new ApiError(403, 'Pergantian akun demo hanya tersedia untuk manajer dan staf.')
   const { userId } = parse(z.object({ userId: z.string().min(1) }), req.body)
-  const target = await db.user.findFirst({ where: { id: userId, storeId: me.storeId, active: true }, include: { store: true, branch: true } })
+  const target = await db.user.findFirst({ where: { id: userId, storeId: me.storeId, active: true, role: { in: ['MANAGER', 'STAFF'] } }, include: { store: true, branch: true } })
   if (!target) throw new ApiError(404, 'Akun demo tidak ditemukan.')
-  const branch = target.role === 'OWNER'
-    ? await db.branch.findFirst({ where: { storeId: me.storeId, active: true }, orderBy: { createdAt: 'asc' } })
-    : target.branchId ? await db.branch.findFirst({ where: { id: target.branchId, storeId: me.storeId, active: true } }) : null
+  const branch = target.branchId ? await db.branch.findFirst({ where: { id: target.branchId, storeId: me.storeId, active: true } }) : null
   if (!branch) throw new ApiError(403, 'Cabang akun demo tidak tersedia.')
   await db.session.update({ where: { tokenHash: tokenHash(req.sessionToken!) }, data: { userId: target.id, activeBranchId: branch.id } })
   res.setHeader('Cache-Control', 'no-store')
